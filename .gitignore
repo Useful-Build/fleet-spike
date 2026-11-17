@@ -1,2 +1,4 @@
 .claude/worktrees/
 verify/
+.fleet-rules/
+node_modules/
