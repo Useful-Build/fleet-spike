@@ -1,0 +1,69 @@
+{
+ "branches": [
+  "fleet/demo",
+  "fleet/done",
+  "fleet/has-pr",
+  "fleet/empty"
+ ],
+ "ahead": {
+  "fleet/demo": 3,
+  "fleet/done": 4,
+  "fleet/has-pr": 2,
+  "fleet/empty": 0
+ },
+ "closed_issues": [
+  {
+   "number": 90,
+   "state": "closed",
+   "body": "Base: fleet/done\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 91,
+   "state": "closed",
+   "body": "Base: fleet/has-pr\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 92,
+   "state": "closed",
+   "body": "Do it.\r\nBase: fleet/done\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 93,
+   "state": "closed",
+   "body": "Base: fleet/empty\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  }
+ ],
+ "prs_to_main": {
+  "fleet/has-pr": [
+   {
+    "number": 400
+   }
+  ]
+ },
+ "merged": {
+  "fleet/done": [
+   301,
+   302
+  ]
+ }
+}
