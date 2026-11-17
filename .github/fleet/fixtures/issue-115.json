@@ -1,0 +1,34 @@
+{
+ "pulls": {
+  "data": {
+   "repository": {
+    "pullRequests": {
+     "nodes": [
+      {
+       "number": 215,
+       "state": "OPEN",
+       "isDraft": false,
+       "isInMergeQueue": false,
+       "autoMergeRequest": {
+        "enabledAt": "2026-11-17T10:00:00Z"
+       },
+       "commits": {
+        "nodes": [
+         {
+          "commit": {
+           "statusCheckRollup": {
+            "state": "PENDING"
+           }
+          }
+         }
+        ]
+       }
+      }
+     ]
+    }
+   }
+  }
+ },
+ "blocked_by": [],
+ "comments": []
+}

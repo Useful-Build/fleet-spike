@@ -1,0 +1,65 @@
+{
+ "pulls": {
+  "data": {
+   "repository": {
+    "pullRequests": {
+     "nodes": [
+      {
+       "number": 212,
+       "state": "OPEN",
+       "isDraft": true,
+       "isInMergeQueue": false,
+       "autoMergeRequest": null,
+       "commits": {
+        "nodes": [
+         {
+          "commit": {
+           "statusCheckRollup": {
+            "state": "SUCCESS"
+           }
+          }
+         }
+        ]
+       }
+      }
+     ]
+    }
+   }
+  }
+ },
+ "blocked_by": [],
+ "comments": [
+  {
+   "user": {
+    "login": "github-actions[bot]",
+    "type": "Bot"
+   },
+   "created_at": "2026-11-17T01:00:00Z",
+   "body": "<!-- fleet:attempt run=50 seat=A outcome=progress retry_after= -->\nRun 50."
+  },
+  {
+   "user": {
+    "login": "github-actions[bot]",
+    "type": "Bot"
+   },
+   "created_at": "2026-11-17T02:00:00Z",
+   "body": "<!-- fleet:attempt run=51 seat=A outcome=failed retry_after= -->\nRun 51."
+  },
+  {
+   "user": {
+    "login": "github-actions[bot]",
+    "type": "Bot"
+   },
+   "created_at": "2026-11-17T03:00:00Z",
+   "body": "<!-- fleet:attempt run=52 seat=A outcome=paused retry_after= -->\nRun 52."
+  },
+  {
+   "user": {
+    "login": "github-actions[bot]",
+    "type": "Bot"
+   },
+   "created_at": "2026-11-17T04:00:00Z",
+   "body": "<!-- fleet:attempt run=53 seat=A outcome=failed retry_after= -->\nRun 53."
+  }
+ ]
+}

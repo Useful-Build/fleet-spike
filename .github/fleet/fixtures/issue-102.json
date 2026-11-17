@@ -1,0 +1,30 @@
+{
+ "pulls": {
+  "data": {
+   "repository": {
+    "pullRequests": {
+     "nodes": [
+      {
+       "number": 202,
+       "state": "MERGED",
+       "isDraft": false,
+       "isInMergeQueue": false,
+       "autoMergeRequest": null,
+       "commits": {
+        "nodes": [
+         {
+          "commit": {
+           "statusCheckRollup": {
+            "state": "SUCCESS"
+           }
+          }
+         }
+        ]
+       }
+      }
+     ]
+    }
+   }
+  }
+ }
+}

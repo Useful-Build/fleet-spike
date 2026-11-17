@@ -1,0 +1,137 @@
+$ bash .github/fleet/router.sh
+task runs active: 2, cap 4
+#113 failed-cap: first run started more than 48 hours ago
+  would run: gh issue edit 113 -R fixture/repo --add-label fleet:failed
+#101 skip-running: a task #101 run is queued or running
+#102 done: PR #202 merged
+  would run: gh issue close 102 -R fixture/repo --comment Done: the PR from task/102 has merged.
+#103 skip-waiting: PR #203 is in the merge queue
+#104 start: unfinished, PR #204 left the queue or failed checks
+  would run: gh workflow run fleet.yml -R fixture/repo -f issue=104
+#105 skip-stopped: has fleet:stop
+#105 stop: cancel run 9005
+  would run: gh run cancel 9005 -R fixture/repo
+#106 skip-failed: has fleet:failed
+#107 failed-cap: 6 working starts, cap is 6
+  would run: gh issue edit 107 -R fixture/repo --add-label fleet:failed
+#108 skip-paused: paused on a usage limit until 2026-11-17T15:00:00Z
+#109 skip-author: author is not FLEET_OWNER
+#110 skip-blocked: blocked by #101
+#111 start: unfinished, no open PR
+  would run: gh workflow run fleet.yml -R fixture/repo -f issue=111
+#112 failed-cap: two failed runs in a row
+  would run: gh issue edit 112 -R fixture/repo --add-label fleet:failed
+#114 skip-full: no free job slot
+#115 skip-waiting: PR #215 has auto-merge on
+started: 2
+[exit 0]
+
+$ env FLEET_EVENT_LABEL=fleet:stop FLEET_EVENT_ISSUE=101 bash .github/fleet/router.sh
+#101 stop: cancel run 9001
+  would run: gh run cancel 9001 -R fixture/repo
+[exit 0]
+
+$ env FLEET_EVENT_LABEL=bug FLEET_EVENT_ISSUE=101 bash .github/fleet/router.sh
+label bug: nothing to do
+[exit 0]
+
+$ bash .github/fleet/task.sh check 104
+issue=104
+#104 start: unfinished, PR #204 left the queue or failed checks
+go=true
+failed_added=false
+[exit 0]
+
+$ bash .github/fleet/task.sh check 105
+issue=105
+::notice::#105 not started (skip-stopped): has fleet:stop
+go=false
+failed_added=false
+[exit 0]
+
+$ bash .github/fleet/task.sh check 107
+issue=107
+::notice::#107 not started, marked fleet:failed: 6 working starts, cap is 6
+  would run: gh issue edit 107 -R fixture/repo --add-label fleet:failed
+failed_added=true
+go=false
+[exit 0]
+
+$ bash .github/fleet/task.sh check 109
+issue=109
+::notice::#109 not started (skip-author): author is not FLEET_OWNER
+go=false
+failed_added=false
+[exit 0]
+
+$ bash .github/fleet/task.sh seat 107
+seat=A
+[exit 0]
+
+$ bash .github/fleet/task.sh base 104
+base=fleet/demo
+[exit 0]
+
+$ bash .github/fleet/task.sh base 111
+fleet: issue #111 has no line "Base: fleet/<topic>". Add one and restart.
+[exit 1]
+
+$ env EXECUTION_FILE=.github/fleet/fixtures/exec-usage-limit.json AGENT_OUTCOME=failure AGENT_STARTED=1794915600 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=B JOB_CANCELLED=false bash .github/fleet/task.sh outcome 111
+outcome=paused
+  would run: gh issue comment 111 -R fixture/repo --body <!-- fleet:attempt run=777 seat=B outcome=paused retry_after=2026-11-17T15:00:00Z -->
+Run 777 on seat B: paused on a usage limit until 2026-11-17T15:00:00Z. The router starts it again after that.
+failed_added=false
+[exit 0]
+
+$ env EXECUTION_FILE=.github/fleet/fixtures/exec-limit-text-only.json AGENT_OUTCOME=failure AGENT_STARTED=1794915600 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=B JOB_CANCELLED=false bash .github/fleet/task.sh outcome 111
+outcome=paused
+  would run: gh issue comment 111 -R fixture/repo --body <!-- fleet:attempt run=777 seat=B outcome=paused retry_after= -->
+Run 777 on seat B: paused on a usage limit. The router starts it again after that.
+failed_added=false
+[exit 0]
+
+$ env EXECUTION_FILE=.github/fleet/fixtures/exec-error.json AGENT_OUTCOME=failure AGENT_STARTED=1794915600 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=B JOB_CANCELLED=false bash .github/fleet/task.sh outcome 111
+outcome=failed
+  would run: gh issue comment 111 -R fixture/repo --body <!-- fleet:attempt run=777 seat=B outcome=failed retry_after= -->
+Run 777 on seat B: failed. See the run log.
+failed_added=false
+fleet: task #111 run failed
+[exit 1]
+
+$ env EXECUTION_FILE= AGENT_OUTCOME=failure AGENT_STARTED=1794897000 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=B JOB_CANCELLED=false bash .github/fleet/task.sh outcome 111
+outcome=progress
+  would run: gh issue comment 111 -R fixture/repo --body <!-- fleet:attempt run=777 seat=B outcome=progress retry_after= -->
+Run 777 on seat B: progress saved, not finished. The router starts it again.
+failed_added=false
+[exit 0]
+
+$ env EXECUTION_FILE= AGENT_OUTCOME=success AGENT_STARTED=1794911400 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=B JOB_CANCELLED=false bash .github/fleet/task.sh outcome 111
+outcome=progress
+  would run: gh issue comment 111 -R fixture/repo --body <!-- fleet:attempt run=777 seat=B outcome=progress retry_after= -->
+Run 777 on seat B: progress saved, not finished. The router starts it again.
+failed_added=false
+[exit 0]
+
+$ env EXECUTION_FILE=.github/fleet/fixtures/exec-error.json AGENT_OUTCOME=failure AGENT_STARTED=1794915600 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=B JOB_CANCELLED=false bash .github/fleet/task.sh outcome 112
+outcome=failed
+  would run: gh issue comment 112 -R fixture/repo --body <!-- fleet:attempt run=777 seat=B outcome=failed retry_after= -->
+Run 777 on seat B: failed. See the run log.
+::warning::#112 marked fleet:failed: two failed runs in a row
+  would run: gh issue edit 112 -R fixture/repo --add-label fleet:failed
+failed_added=true
+fleet: task #112 run failed
+[exit 1]
+
+$ env EXECUTION_FILE= AGENT_OUTCOME=success AGENT_STARTED=1794911400 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=B JOB_CANCELLED=false bash .github/fleet/task.sh outcome 103
+outcome=done
+  would run: gh issue comment 103 -R fixture/repo --body <!-- fleet:attempt run=777 seat=B outcome=done retry_after= -->
+Run 777 on seat B: done. The PR is ready and set to merge.
+failed_added=false
+[exit 0]
+
+$ env RUN_ID=777 SEAT=B JOB_CANCELLED=true AGENT_OUTCOME=cancelled bash .github/fleet/task.sh outcome 111
+outcome=cancelled
+  would run: gh issue comment 111 -R fixture/repo --body <!-- fleet:attempt run=777 seat=B outcome=cancelled retry_after= -->
+Run 777 on seat B: cancelled.
+failed_added=false
+[exit 0]
