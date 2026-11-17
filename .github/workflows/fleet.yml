@@ -1,12 +1,17 @@
 # Fleet: runs Claude Code agents as Actions jobs, one task issue per job.
-# router: every 30 minutes and on fleet labels, starts unfinished tasks (.github/fleet/router.sh).
-# task:   one run per task issue, started by the router with workflow_dispatch.
-# alert:  tells Telegram when a task is marked fleet:failed.
+# router:      every 30 minutes and on fleet labels, starts unfinished tasks (.github/fleet/router.sh),
+#              and opens the final PR of a finished fleet/<topic> branch. Also "stop all".
+# final-alert: tells Telegram a final PR is ready for review.
+# bad-seat:    fails a task run dispatched without seat a, b or c.
+# task:        the agent. One run per task issue, started by the router with workflow_dispatch.
+#              It judges nothing and writes no comment or label.
+# outcome:     its own runner. Classifies the task run, posts the marker, locks the PR, applies the caps.
+# alert:       tells Telegram when a task is marked fleet:failed.
 # How it can go wrong and what stops it: .github/fleet/FAILURES.md.
 name: fleet
 
 # The router finds a task's runs by this exact name, so keep "task #<n>".
-run-name: "${{ inputs.issue && format('task #{0}', inputs.issue) || 'fleet router' }}"
+run-name: "${{ inputs.stop_all && 'fleet stop all' || (inputs.issue && format('task #{0}', inputs.issue) || 'fleet router') }}"
 
 on:
   issues:
@@ -20,30 +25,45 @@ on:
         type: string
         required: false
         default: ""
+      seat:
+        description: Seat for the task run, a, b or c. The router sets it.
+        type: string
+        required: false
+        default: ""
+      stop_all:
+        description: Stop all. Adds fleet:stop to every open fleet issue and cancels every task run.
+        type: boolean
+        required: false
+        default: false
 
 permissions: {}
 
 jobs:
   router:
     if: >-
-      !inputs.issue &&
+      (inputs.stop_all || !inputs.issue) &&
       (github.event_name != 'issues' || github.event.label.name == 'fleet' || github.event.label.name == 'fleet:stop')
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Rounds run one at a time. Each fleet:stop event and "stop all" get their own group, so a burst
+    # of them is never dropped as a superseded pending run.
     concurrency:
-      group: fleet-router
+      group: fleet-router-${{ inputs.stop_all && 'stop-all' || (github.event.label.name == 'fleet:stop' && format('stop-{0}', github.event.issue.number) || 'round') }}
       cancel-in-progress: false
     permissions:
       actions: write
       issues: write
-      pull-requests: read
+      pull-requests: write
       contents: read
+    outputs:
+      final_prs: ${{ steps.route.outputs.final_prs }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           sparse-checkout: .github/fleet
           persist-credentials: false
       - name: Route
+        id: route
         env:
           GH_TOKEN: ${{ github.token }}
           FLEET_REPO: ${{ github.repository }}
@@ -52,24 +72,77 @@ jobs:
           FLEET_MAX_STARTS: ${{ vars.FLEET_MAX_STARTS }}
           FLEET_EVENT_LABEL: ${{ github.event.label.name }}
           FLEET_EVENT_ISSUE: ${{ github.event.issue.number }}
+          FLEET_STOP_ALL: ${{ inputs.stop_all }}
         run: bash .github/fleet/router.sh
 
+  final-alert:
+    needs: router
+    if: always() && needs.router.outputs.final_prs != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: fleet-alert
+    permissions: {}
+    steps:
+      - name: Tell Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.FLEET_TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.FLEET_TELEGRAM_CHAT_ID }}
+          REPO: ${{ github.repository }}
+          URLS: ${{ needs.router.outputs.final_prs }}
+        run: |
+          set -euo pipefail
+          for url in $URLS; do
+            [[ $url =~ ^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[0-9]+$ ]] || { echo "::error::bad PR URL"; exit 1; }
+            text="Fleet: ready for review in $REPO
+          $url"
+            # The URL goes in through stdin so the bot token stays out of the process list.
+            printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$TELEGRAM_BOT_TOKEN" |
+              curl -fsS --retry 3 -o /dev/null -K - \
+                --data-urlencode "chat_id=$TELEGRAM_CHAT_ID" --data-urlencode "text=$text"
+          done
+          echo "sent"
+
+  bad-seat:
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.issue && !inputs.stop_all &&
+      !contains(fromJSON('["a","b","c"]'), inputs.seat)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Refuse
+        env:
+          SEAT: ${{ inputs.seat }}
+        run: |
+          echo "::error::A task run needs the seat input a, b or c, and got '$SEAT'. The router sets it."
+          exit 1
+
   task:
-    if: github.event_name == 'workflow_dispatch' && inputs.issue
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.issue && !inputs.stop_all &&
+      contains(fromJSON('["a","b","c"]'), inputs.seat)
     runs-on: ubuntu-latest
     timeout-minutes: 355
+    # The seat's environment holds FLEET_SEAT_TOKEN and FLEET_AGENTS_CONFIG_KEY, and only main may use it.
+    environment: fleet-seat-${{ inputs.seat }}
     concurrency:
       group: fleet-task-${{ inputs.issue }}
       cancel-in-progress: false
+    # issues: read and pull-requests: read are for the read-only check. Nothing here can comment,
+    # label or lock: the outcome job does that from its own runner.
     permissions:
       contents: write
-      pull-requests: write
-      issues: write
       id-token: write
       actions: read
+      issues: read
+      pull-requests: read
+    # Claims, not facts: the agent can change what this job reports. The outcome job treats them so.
     outputs:
-      issue: ${{ steps.check.outputs.issue }}
-      failed_added: ${{ steps.outcome.outputs.failed_added == 'true' || steps.check.outputs.failed_added == 'true' }}
+      started: ${{ steps.start.outputs.started }}
+      checkout_ran: ${{ steps.checkout.outcome == 'success' }}
+      agent: ${{ steps.agent.outcome }}
+      paused: ${{ steps.usage.outputs.paused }}
+      retry_after: ${{ steps.usage.outputs.retry_after }}
     env:
       FLEET_REPO: ${{ github.repository }}
       FLEET_OWNER: ${{ vars.FLEET_OWNER }}
@@ -77,8 +150,13 @@ jobs:
       FLEET_MAX_STARTS: ${{ vars.FLEET_MAX_STARTS }}
       ISSUE: ${{ inputs.issue }}
     steps:
+      - name: Start time
+        id: start
+        run: echo "started=$(date -u +%s)" >> "$GITHUB_OUTPUT"
+
       # The scripts come from main as dispatched, copied out before the task branch replaces the
-      # checkout, so the agent's branch never changes the code that judges its run.
+      # checkout. That keeps the task branch's files out of these steps. It doesn't keep the agent
+      # out: it runs on this runner and can change the copy (FAILURES.md).
       - name: Fleet scripts from main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -92,14 +170,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash "$RUNNER_TEMP/fleet/task.sh" check "$ISSUE"
-
-      # Before the base branch, so a run that fails on a missing Base line still gets a seat in its marker.
-      - name: Pick the seat
-        id: seat
-        if: steps.check.outputs.go == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash "$RUNNER_TEMP/fleet/task.sh" seat "$ISSUE"
 
       - name: Read the base branch
         id: base
@@ -176,14 +246,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh api "repos/$FLEET_REPO/issues/$ISSUE" --jq .body > "$RUNNER_TEMP/brief.md"
 
-      - name: Start the clock
-        id: clock
-        if: steps.check.outputs.go == 'true'
-        run: echo "started=$(date -u +%s)" >> "$GITHUB_OUTPUT"
-
-      # Green or red is decided by the outcome step, so a usage limit or a step timeout can end green.
+      # Green or red is decided by the outcome job, so a usage limit or a step timeout can end green.
       # allowed_bots: runs the router dispatches have github-actions[bot] as their actor, and the
       # action rejects bot actors not listed there. It also keeps the strict permission mode.
+      # additional_permissions is merged over the action's defaults key by key (DEFAULT_PERMISSIONS
+      # and parseAdditionalPermissions in src/github/token.ts), so issues: read replaces the app
+      # token's issues: write. The agent needs only gh pr, and can then neither remove fleet:stop or
+      # fleet:failed nor unlock its issue with that token.
       - name: Agent
         id: agent
         if: steps.check.outputs.go == 'true'
@@ -191,10 +260,11 @@ jobs:
         timeout-minutes: 330
         uses: anthropics/claude-code-action@6070f08d2b4766348e0acded463606a7b176417b # v1
         with:
-          claude_code_oauth_token: ${{ secrets[format('FLEET_SEAT_TOKEN_{0}', steps.seat.outputs.seat)] }}
+          claude_code_oauth_token: ${{ secrets.FLEET_SEAT_TOKEN }}
           allowed_bots: github-actions[bot]
           additional_permissions: |
             actions: read
+            issues: read
           settings: '{"autoContinueAtUsageLimit": false}'
           prompt: |
             You are fleet task #${{ steps.check.outputs.issue }} on branch task/${{ steps.check.outputs.issue }}. Its base branch is ${{ steps.base.outputs.base }}.
@@ -207,15 +277,37 @@ jobs:
             - If task/${{ steps.check.outputs.issue }} already has commits or a PR, read the "Progress" section of the PR description and carry on from there. Don't start over.
             - As soon as the branch has its first commit, push it with `git push origin task/${{ steps.check.outputs.issue }}` and open a DRAFT PR with `gh pr create --draft --base ${{ steps.base.outputs.base }} --head task/${{ steps.check.outputs.issue }}`. Title: the issue's title. Body: "Task: #${{ steps.check.outputs.issue }}" and a "Progress" section with three lines: done, next, last passing check.
             - Commit and push at least every 30 minutes and after each finished part, and update the Progress section each time with `gh pr edit`.
-            - When the brief's acceptance checks pass: put the proof (the commands and their output) in the PR body, run `gh pr ready`, then enable auto-merge with a merge commit with `gh pr merge --auto --merge`, then stop.
-            - Never push to main or to any fleet/* branch. Never edit anything under .github/. Never merge by hand, and never approve a PR.
+            - When the brief's acceptance checks pass: commit and push everything, put the proof (the commands and their output) in the PR body, run `gh pr ready`, then enable auto-merge with a merge commit with `gh pr merge --auto --merge`, then stop.
+            - Never push to main or to any fleet/* branch. Never edit anything under .github/ or test.sh: CI refuses those changes on fleet branches. Never merge by hand, and never approve a PR.
           claude_args: |
             --model claude-opus-5-5
             --permission-mode default
             --allowedTools "Read,Edit,Write,Glob,Grep,Bash,Agent,Skill,TaskCreate,TaskGet,TaskList,TaskUpdate,TodoWrite"
 
+      # A claim for the outcome job. An unreadable file is a warning and "not paused", never a failure.
+      - name: Usage limit
+        id: usage
+        if: always() && steps.agent.outcome != 'skipped' && steps.agent.outcome != ''
+        env:
+          EXECUTION_FILE: ${{ steps.agent.outputs.execution_file }}
+        run: bash "$RUNNER_TEMP/fleet/task.sh" usage "$ISSUE"
+
+      # A push with GITHUB_TOKEN starts no CI, so the checkpoint only pushes while the task has no
+      # PR or a draft one. It never lands on a ready PR.
+      - name: Task PR state
+        id: prstate
+        if: always() && steps.checkout.outcome == 'success' && steps.agent.outcome != 'skipped'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE: ${{ steps.base.outputs.base }}
+        run: bash "$RUNNER_TEMP/fleet/task.sh" pr-state "$ISSUE"
       - name: Checkpoint
-        if: always() && steps.check.outputs.go == 'true' && steps.checkout.outcome == 'success'
+        id: checkpoint
+        if: >-
+          always() && steps.checkout.outcome == 'success' && steps.agent.outcome != 'skipped' &&
+          (steps.prstate.outputs.pr_state == 'none' || steps.prstate.outputs.pr_state == 'draft')
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           BASE: ${{ steps.base.outputs.base }}
@@ -249,26 +341,61 @@ jobs:
           else
             echo "nothing to push"
           fi
+      - name: Checkpoint warning
+        if: always() && (steps.checkpoint.outcome == 'failure' || steps.prstate.outcome == 'failure')
+        run: echo "::warning::the checkpoint didn't save this run's leftover work. See the steps above."
 
+  outcome:
+    needs: task
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.issue && !inputs.stop_all
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      issues: write
+      pull-requests: write
+      contents: read
+      actions: read
+    outputs:
+      failed_for_good: ${{ steps.outcome.outputs.failed_for_good }}
+      pr_ready: ${{ steps.outcome.outputs.pr_ready }}
+    env:
+      ISSUE: ${{ inputs.issue }}
+    steps:
+      # Scripts from main on this job's own runner. Nothing from the task job's runner runs here.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/fleet
+          persist-credentials: false
       - name: Outcome
         id: outcome
-        if: always() && steps.check.outputs.go == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          FLEET_REPO: ${{ github.repository }}
+          FLEET_OWNER: ${{ vars.FLEET_OWNER }}
+          FLEET_MAX_JOBS: ${{ vars.FLEET_MAX_JOBS }}
+          FLEET_MAX_STARTS: ${{ vars.FLEET_MAX_STARTS }}
+          SEAT: ${{ inputs.seat }}
           RUN_ID: ${{ github.run_id }}
-          SEAT: ${{ steps.seat.outputs.seat }}
-          JOB_CANCELLED: ${{ job.status == 'cancelled' }}
-          AGENT_OUTCOME: ${{ steps.agent.outcome }}
-          AGENT_STARTED: ${{ steps.clock.outputs.started }}
+          TASK_RESULT: ${{ needs.task.result }}
+          CHECKOUT_RAN: ${{ needs.task.outputs.checkout_ran }}
+          AGENT_OUTCOME: ${{ needs.task.outputs.agent }}
+          PAUSED: ${{ needs.task.outputs.paused }}
+          RETRY_AFTER: ${{ needs.task.outputs.retry_after }}
+          STARTED: ${{ needs.task.outputs.started }}
           AGENT_TIMEOUT_MINUTES: "330"
-          EXECUTION_FILE: ${{ steps.agent.outputs.execution_file }}
-        run: bash "$RUNNER_TEMP/fleet/task.sh" outcome "$ISSUE"
+        run: bash .github/fleet/task.sh outcome "$ISSUE"
+      - name: Red on a failed run
+        if: steps.outcome.outputs.outcome == 'failed'
+        run: |
+          echo "::error::task #$ISSUE run failed. See the task job's log."
+          exit 1
 
   alert:
-    needs: task
-    if: always() && needs.task.outputs.failed_added == 'true'
+    needs: outcome
+    if: always() && needs.outcome.outputs.failed_for_good == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    environment: fleet-alert
     permissions: {}
     steps:
       - name: Tell Telegram
@@ -276,7 +403,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.FLEET_TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.FLEET_TELEGRAM_CHAT_ID }}
           REPO: ${{ github.repository }}
-          ISSUE: ${{ needs.task.outputs.issue }}
+          ISSUE: ${{ inputs.issue }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
