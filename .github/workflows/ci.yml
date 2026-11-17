@@ -17,6 +17,26 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      # The gate on fleet/** is this check, and fleet/** needs no approval, so a change into a
+      # fleet branch may not touch the gate itself. Those changes go to main through the owner.
+      - name: No CI or workflow changes into fleet branches
+        if: >-
+          (github.event_name == 'pull_request' && startsWith(github.base_ref, 'fleet/')) ||
+          (github.event_name == 'merge_group' && startsWith(github.event.merge_group.base_ref, 'refs/heads/fleet/'))
+        env:
+          BASE_SHA: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          changed=$(git diff --name-only --no-renames "$BASE_SHA...$HEAD_SHA")
+          blocked=$(grep -E '^(\.github/|test\.sh$)' <<<"$changed" || true)
+          if [ -n "$blocked" ]; then
+            echo "::error::changes into a fleet branch may not touch .github/ or test.sh:"
+            echo "$blocked"
+            exit 1
+          fi
+          echo "no .github/ or test.sh changes"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
