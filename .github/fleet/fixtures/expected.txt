@@ -1,5 +1,5 @@
 $ env FLEET_ACT_FAIL=gh api -X PUT repos/fixture/repo/issues/141/lock* bash .github/fleet/router.sh
-task runs active: 2, cap 23
+task runs active: 2, cap 25
 #141 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/141/lock --silent
   (fails)
@@ -95,9 +95,15 @@ fleet: missing fixture .github/fleet/fixtures/issue-129.json
 #140 done pr=merged
   would run: gh issue comment 140 -R fixture/repo --body Done: the PR from task/140 has merged.
   would run: gh issue close 140 -R fixture/repo
+#143 start pr=none
+  would run: gh api -X PUT repos/fixture/repo/issues/143/lock --silent
+  would run: gh workflow run fleet.yml -R fixture/repo -f issue=143 -f seat=a
+#144 start pr=none
+  would run: gh api -X PUT repos/fixture/repo/issues/144/lock --silent
+  would run: gh workflow run fleet.yml -R fixture/repo -f issue=144 -f seat=c
 #142 skip-waiting pr=automerge
 #130 skip-full pr=none
-started: 21
+started: 23
 failed_tasks=116 119 139
 fleet/demo final PR: not ready, an open task names it
 fleet/done final PR: ready
@@ -209,6 +215,10 @@ $ env FLEET_STOP_ALL=true bash .github/fleet/router.sh
   would run: gh issue edit 139 -R fixture/repo --add-label fleet:stop
 #140 stop all: add fleet:stop
   would run: gh issue edit 140 -R fixture/repo --add-label fleet:stop
+#143 stop all: add fleet:stop
+  would run: gh issue edit 143 -R fixture/repo --add-label fleet:stop
+#144 stop all: add fleet:stop
+  would run: gh issue edit 144 -R fixture/repo --add-label fleet:stop
 #142 stop all: add fleet:stop
   would run: gh issue edit 142 -R fixture/repo --add-label fleet:stop
 #130 stop all: add fleet:stop

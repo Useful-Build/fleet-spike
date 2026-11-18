@@ -721,5 +721,39 @@
   ],
   "created_at": "2026-11-16T00:42:00Z",
   "body": "Do task 142.\r\nBase: fleet/demo\r\n"
+ },
+ {
+  "number": 143,
+  "state": "open",
+  "title": "Task 143",
+  "locked": false,
+  "user": {
+   "login": "fleet-owner",
+   "type": "User"
+  },
+  "labels": [
+   {
+    "name": "fleet"
+   }
+  ],
+  "created_at": "2026-11-16T00:41:00Z",
+  "body": "Do task 143.\r\nBase: fleet/demo\r\n"
+ },
+ {
+  "number": 144,
+  "state": "open",
+  "title": "Task 144",
+  "locked": false,
+  "user": {
+   "login": "fleet-owner",
+   "type": "User"
+  },
+  "labels": [
+   {
+    "name": "fleet"
+   }
+  ],
+  "created_at": "2026-11-16T00:41:30Z",
+  "body": "Do task 144.\r\nBase: fleet/demo\r\n"
  }
 ]

@@ -13,8 +13,8 @@
 # Decision lines are compared without their free-text reason ("#104 start pr=failing", not
 # "#104 start pr=failing: unfinished, ..."): the decision, the PR state word and the commands are
 # what's under test. The PR state is kept so two states that both lead to "start" can't hide a
-# wrong rule. The clock is fixed at 2026-11-17T12:00:00Z, and the job cap at 23 with 2 task runs
-# active, so the 21 starts before #130 fill it exactly. One issue per case in fixtures/issues.json:
+# wrong rule. The clock is fixed at 2026-11-17T12:00:00Z, and the job cap at 25 with 2 task runs
+# active, so the 23 starts before #130 fill it exactly. One issue per case in fixtures/issues.json:
 #   101 running            102 merged               103 in the merge queue, no auto-merge object
 #   104 auto-merge on, checks failed                105 stopped, with a queued run
 #   106 fleet:failed       107 auto-merge on, checks passing
@@ -36,6 +36,8 @@
 #   138 b and c paused, a paused until exactly now  139 markers listed out of time order
 #   140 merged, the only task naming fleet/closing  141 its lock fails
 #   142 5 starts, PR with auto-merge on             130 (created last) no free job slot
+#   143 progress on c, then cancelled on a: only the progress moves the rotation, so a
+#   144 paused on b 30 minutes ago, retry_after unreadable: b is blocked for an hour, so c
 #   141 is created first, so its failed lock comes before the slots run out.
 # final.json: fleet/done ready, fleet/demo has open tasks, fleet/has-pr has a PR into main,
 # fleet/empty isn't ahead of main, fleet/closing is ready once #140 closes this round (the open
@@ -49,7 +51,7 @@ expected="$fx/expected.txt"
 
 [[ $# == 0 ]] || { echo "usage: router-test.sh (no options; edit expected.txt by hand)" >&2; exit 2; }
 
-export FLEET_FIXTURES="$fx" FLEET_NOW=1794916800 FLEET_OWNER=fleet-owner FLEET_MAX_JOBS=23 FLEET_MAX_STARTS=6
+export FLEET_FIXTURES="$fx" FLEET_NOW=1794916800 FLEET_OWNER=fleet-owner FLEET_MAX_JOBS=25 FLEET_MAX_STARTS=6
 unset GITHUB_OUTPUT FLEET_EVENT_LABEL FLEET_EVENT_ISSUE FLEET_STOP_ALL FLEET_ACT_FAIL
 
 run() {
