@@ -1,0 +1,44 @@
+# Temporary proof scaffolding on a throwaway branch. Never merged.
+name: proof checks
+on:
+  push:
+    branches: [proof-checks]
+permissions: {}
+jobs:
+  cap:
+    name: cap ${{ matrix.n }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        n: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
+    steps:
+      - run: sleep 120
+  rules:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Try what the rules must refuse
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          try() { echo "### $1"; shift; if "$@" 2>&1; then echo "RESULT: ALLOWED"; else echo "RESULT: REFUSED (exit $?)"; fi; echo; }
+          date -u > rules-probe.txt && git add rules-probe.txt && git commit -q -m "chore: rules probe"
+          try "a. push to main" git push origin HEAD:main
+          try "b. push to fleet/proof2" git push origin HEAD:fleet/proof2
+          try "c. delete fleet/proof2" git push origin --delete fleet/proof2
+          git push -q origin HEAD:refs/heads/proof-checks-pr
+          pr=$(gh pr create --base main --head proof-checks-pr --title "Rules check, do not merge" --body "Opened by the proof to check that a bot can't merge into main." | grep -o '[0-9]*$')
+          echo "opened PR #$pr"
+          try "d. approve own PR into main" gh pr review "$pr" --approve
+          try "e. merge PR into main" gh pr merge "$pr" --merge
+          try "f. merge PR into main with admin flag" gh pr merge "$pr" --merge --admin
+          gh pr close "$pr" --delete-branch || true
