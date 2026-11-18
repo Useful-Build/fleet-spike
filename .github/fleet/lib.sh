@@ -26,8 +26,10 @@ fleet_init() {
   : "${FLEET_OWNER:?FLEET_OWNER is not set. Set the repo variable FLEET_OWNER to the login whose issues may start tasks.}"
   FLEET_MAX_JOBS=${FLEET_MAX_JOBS:-16}
   FLEET_MAX_STARTS=${FLEET_MAX_STARTS:-6}
+  FLEET_BUDGET_FLOOR=${FLEET_BUDGET_FLOOR:-200}
   is_number "$FLEET_MAX_JOBS" || die "FLEET_MAX_JOBS must be a positive whole number"
   is_number "$FLEET_MAX_STARTS" || die "FLEET_MAX_STARTS must be a positive whole number"
+  is_number "$FLEET_BUDGET_FLOOR" || die "FLEET_BUDGET_FLOOR must be a positive whole number"
   if [[ -n ${FLEET_FIXTURES:-} ]]; then
     [[ -d $FLEET_FIXTURES ]] || die "FLEET_FIXTURES is not a directory: $FLEET_FIXTURES"
     FLEET_REPO=${FLEET_REPO:-fixture/repo}

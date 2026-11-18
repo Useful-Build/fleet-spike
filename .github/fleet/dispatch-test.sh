@@ -20,7 +20,9 @@
 # - A run list that fails while waiting is a warning naming the task, then the run counts as
 #   missing, and the outputs are still written.
 # - Each round prints the budget left at its start and its end. A budget that can't be read is a
-#   warning, and the round goes on.
+#   warning, and the round goes on as if above the floor.
+# - Below FLEET_BUDGET_FLOOR (200 unless set) a round starts nothing, opens no final PR and is
+#   green. At or above it, the round runs as usual. Stop all runs whatever the budget.
 # Seats: no markers, so the seat is "abc"[issue number mod 3].
 set -euo pipefail
 
@@ -78,6 +80,7 @@ case "$*" in
     printf '[%s]\n' "$(or_default "$d/comments-${n%%/*}.json" '[]')"
     ;;
   "-X PUT repos/$R/issues/"*"/lock --silent") ;;
+  "-X POST repos/$R/actions/runs/"*"/cancel --silent") ;;
   "-X POST repos/$R/actions/workflows/ci.yml/dispatches -f ref="*" --silent") ;;
   "-X POST repos/$R/actions/workflows/fleet.yml/dispatches "*)
     n="" details=false prev=""
@@ -128,11 +131,12 @@ scenario() {
   mkdir "$STUB"
   : >"$STUB/calls.log"
 }
+# route [NAME=value ...]: run the router, with any extra env last.
 route() {
   code=0
   out=$(env -u FLEET_FIXTURES -u FLEET_EVENT_LABEL -u FLEET_EVENT_ISSUE -u FLEET_STOP_ALL -u FLEET_AFTER_RUN \
-    PATH="$tmp/bin:$PATH" FLEET_REPO=fixture/repo FLEET_OWNER=fleet-owner FLEET_NOW=1794916800 \
-    GITHUB_OUTPUT="$STUB/output" bash "$here/router.sh" 2>&1) || code=$?
+    -u FLEET_BUDGET_FLOOR PATH="$tmp/bin:$PATH" FLEET_REPO=fixture/repo FLEET_OWNER=fleet-owner \
+    FLEET_NOW=1794916800 GITHUB_OUTPUT="$STUB/output" "$@" bash "$here/router.sh" 2>&1) || code=$?
 }
 fail() {
   echo "dispatch-test: $name: $*" >&2
@@ -281,7 +285,8 @@ want_out "fleet: 1 changes failed"
 want_exit 1
 done_case
 
-# The budget can't be read: a warning at the start and at the end, and the round runs as usual.
+# The budget can't be read: a warning at the start and at the end, and the round runs as it does
+# above the floor.
 scenario budget-unreadable
 issue 261 | jq -s . >"$STUB/issues.json"
 ok 5061 >"$STUB/dispatch-261"
@@ -292,6 +297,46 @@ want_out "::warning::fleet budget: can't read it (router start)"
 want_out "::warning::fleet budget: can't read it (router end)"
 want_call "$(dispatch_call 261 a)"
 want_out "#261 run 5061 is in the run list"
+want_exit 0
+done_case
+
+# 199 left, below the default floor of 200: a warning with the numbers, then nothing but the
+# budget is read, nothing starts, no final PR, green.
+scenario budget-low
+issue 271 | jq -s . >"$STUB/issues.json"
+ok 5071 >"$STUB/dispatch-271"
+final_ready
+echo '{"resources": {"core": {"limit": 1000, "used": 801, "remaining": 199, "reset": 1794918000}}}' >"$STUB/rate_limit.json"
+route
+want_out "::warning::fleet budget: 199 requests left, below the floor of 200. This round starts no task and opens no final PR, to leave room for the outcome jobs' markers."
+want_no_call "issues?state=open"
+want_no_call "dispatches"
+want_no_call "pr create"
+[[ $(grep -cvxF "api rate_limit" "$STUB/calls.log") == 0 ]] || fail "a call other than the budget read"
+want_exit 0
+done_case
+
+# The same low budget with a floor set to 150: 199 is above it, so the task starts.
+scenario budget-floor-set
+issue 281 | jq -s . >"$STUB/issues.json"
+ok 5081 >"$STUB/dispatch-281"
+echo "5081|task #281|queued|2" >"$STUB/runs"
+echo '{"resources": {"core": {"limit": 1000, "used": 801, "remaining": 199, "reset": 1794918000}}}' >"$STUB/rate_limit.json"
+route FLEET_BUDGET_FLOOR=150
+want_call "$(dispatch_call 281 c)"
+want_out "#281 run 5081 is in the run list"
+want_exit 0
+done_case
+
+# Stop all below the floor: stopping always wins, so the label and the cancel still go out.
+scenario budget-low-stop-all
+issue 291 | jq -s . >"$STUB/issues.json"
+echo "5091|task #291|in_progress|1" >"$STUB/runs"
+echo '{"resources": {"core": {"limit": 1000, "used": 990, "remaining": 10, "reset": 1794918000}}}' >"$STUB/rate_limit.json"
+route FLEET_STOP_ALL=true
+want_call "issue edit 291 -R fixture/repo --add-label fleet:stop"
+want_call "api -X POST repos/fixture/repo/actions/runs/5091/cancel --silent"
+want_out "stop all: done"
 want_exit 0
 done_case
 

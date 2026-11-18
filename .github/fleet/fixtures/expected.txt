@@ -239,6 +239,23 @@ stop all: done
 fleet budget: 200/1000, resets 12:59 UTC (router end)
 [exit 0]
 
+$ env FLEET_BUDGET_FLOOR=201 bash .github/fleet/router.sh
+fleet budget: 200/1000, resets 12:59 UTC (router start)
+::warning::fleet budget: 200 requests left, below the floor of 201. This round starts no task and opens no final PR, to leave room for the outcome jobs' markers.
+fleet budget: 200/1000, resets 12:59 UTC (router end)
+[exit 0]
+
+$ env FLEET_BUDGET_FLOOR=201 FLEET_EVENT_LABEL=fleet:stop FLEET_EVENT_ISSUE=101 bash .github/fleet/router.sh
+fleet budget: 200/1000, resets 12:59 UTC (router start)
+#101 stop
+  would run: gh api -X POST repos/fixture/repo/actions/runs/9001/cancel --silent
+fleet budget: 200/1000, resets 12:59 UTC (router end)
+[exit 0]
+
+$ env FLEET_BUDGET_FLOOR=0 bash .github/fleet/router.sh
+fleet: FLEET_BUDGET_FLOOR must be a positive whole number
+[exit 1]
+
 $ bash .github/fleet/task.sh check 104
 issue=104
 #104 start

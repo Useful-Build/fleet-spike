@@ -45,6 +45,9 @@
 # for the second time in a row. Only the named run is left out.
 # Waiting for dispatched runs: 9001 is in runs.json; 9150 isn't, and has finished; 9151 isn't,
 # though reading it by id says it's in progress (the list lags); 9152 can't be read at all.
+# The budget: rate_limit.json leaves 200 requests, exactly the default floor, so the main round
+# runs as usual. With the floor at 201 the same round starts nothing, closes nothing and opens no
+# final PR, and is green; a fleet:stop event still cancels. after-run/ leaves 731, above the floor.
 # final.json: fleet/done ready, fleet/demo has open tasks, fleet/has-pr has a PR into main,
 # fleet/empty isn't ahead of main, fleet/closing is ready once #140 closes this round (the open
 # list is read again), fleet/orphan is ahead with no task naming it, fleet/reviewed has a closed
@@ -106,6 +109,9 @@ actual=$(
   run env FLEET_EVENT_LABEL=fleet:stop FLEET_EVENT_ISSUE=101 bash "$here/router.sh"
   run env FLEET_EVENT_LABEL=bug FLEET_EVENT_ISSUE=101 bash "$here/router.sh"
   run env FLEET_STOP_ALL=true bash "$here/router.sh"
+  run env FLEET_BUDGET_FLOOR=201 bash "$here/router.sh"
+  run env FLEET_BUDGET_FLOOR=201 FLEET_EVENT_LABEL=fleet:stop FLEET_EVENT_ISSUE=101 bash "$here/router.sh"
+  run env FLEET_BUDGET_FLOOR=0 bash "$here/router.sh"
   run bash "$here/task.sh" check 104
   run bash "$here/task.sh" check 105
   run bash "$here/task.sh" check 116

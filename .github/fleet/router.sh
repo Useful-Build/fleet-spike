@@ -5,10 +5,11 @@
 #                         open the final PR of a finished fleet/<topic> branch and start its ci
 #   router.sh --dry-run   print every decision and the commands it would run, change nothing
 #
-# Env: FLEET_OWNER (required), FLEET_MAX_JOBS (16), FLEET_MAX_STARTS (6), FLEET_REPO (from the
-# checkout), FLEET_EVENT_LABEL and FLEET_EVENT_ISSUE (the label event that started the run, if any),
-# FLEET_STOP_ALL=true (stop every task and exit), FLEET_AFTER_RUN (the id of the task run whose
-# next-round job started this round: that run is ending, so it isn't counted as running).
+# Env: FLEET_OWNER (required), FLEET_MAX_JOBS (16), FLEET_MAX_STARTS (6), FLEET_BUDGET_FLOOR (200:
+# a round that starts with fewer REST requests left starts nothing), FLEET_REPO (from the
+# checkout), FLEET_EVENT_LABEL and FLEET_EVENT_ISSUE (the label event that started the run, if
+# any), FLEET_STOP_ALL=true (stop every task and exit), FLEET_AFTER_RUN (the id of the task run
+# whose next-round job started this round: that run is ending, so it isn't counted as running).
 # FLEET_FIXTURES=<dir> reads fixture JSON instead of the API and implies --dry-run. FLEET_NOW
 # fixes the clock (epoch seconds). The failure list this answers is FAILURES.md next to this file.
 set -euo pipefail
@@ -185,6 +186,14 @@ after_run=${FLEET_AFTER_RUN:-}
 if [[ -n $after_run ]]; then
   [[ $after_run =~ ^[0-9]{1,20}$ ]] || die "FLEET_AFTER_RUN must be a run id"
   echo "started by task run $after_run, which is ending: it isn't counted as running"
+fi
+
+# Every job's GITHUB_TOKEN in this repo shares one budget, and a round can spend a lot of it. Below
+# the floor the round leaves it to the outcome jobs, which must post their markers for the caps to
+# count. The stop paths above always run. A budget that can't be read doesn't hold a round back.
+if [[ -n $BUDGET_LEFT ]] && ((BUDGET_LEFT < FLEET_BUDGET_FLOOR)); then
+  warn "fleet budget: $BUDGET_LEFT requests left, below the floor of $FLEET_BUDGET_FLOOR. This round starts no task and opens no final PR, to leave room for the outcome jobs' markers."
+  exit 0
 fi
 
 issues=$(api_issues)

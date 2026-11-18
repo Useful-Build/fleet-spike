@@ -8,7 +8,7 @@ Once, by an admin, before the first task starts:
 
 1. **Rulesets:** apply `.github/rulesets/main.json`, then `.github/rulesets/fleet.json` (Settings, Rules, Rulesets, Import a ruleset). Both must be on before the first task is started: the seat environments only protect anything while `main` is protected. `fleet.json` has no merge queue: GitHub refused one on the `fleet/**` ruleset when we tried (its docs say the same for branch protection rules with a wildcard), so each feature branch gets its own queue ruleset when you start it (below).
 2. **Labels:** create `fleet`, `fleet:stop` and `fleet:failed`. The router doesn't create them.
-3. **Variables:** set the repo variables `FLEET_OWNER`, `FLEET_MAX_JOBS` and `FLEET_MAX_STARTS` (see below).
+3. **Variables:** set the repo variables `FLEET_OWNER`, `FLEET_MAX_JOBS`, `FLEET_MAX_STARTS` and, if you want another floor, `FLEET_BUDGET_FLOOR` (see below).
 4. **Environments:** create `fleet-seat-a`, `fleet-seat-b` and `fleet-seat-c` (each holds `FLEET_SEAT_TOKEN` and `FLEET_AGENTS_CONFIG_KEY`) and `fleet-alert` (holds `FLEET_TELEGRAM_BOT_TOKEN` and `FLEET_TELEGRAM_CHAT_ID`). Limit each to the branch `main`.
 5. **Actions:** turn on "Allow GitHub Actions to create and approve pull requests" (Settings, Actions, General), so the router can open the final PR.
 6. **Pull requests:** turn on "Allow auto-merge" (Settings, General), or no task can finish.
@@ -58,6 +58,7 @@ The fleet posts its records as comments on locked issues, unlocking each for a f
 - `FLEET_OWNER`: the only login whose issues start tasks. Required.
 - `FLEET_MAX_JOBS`: most task jobs at once. Default 16.
 - `FLEET_MAX_STARTS`: most starts per task. A run that ends `progress`, `failed` or `done` is a start, and so is a cancelled run when the task has no `fleet:stop`. One that ends on a usage limit, or is cancelled by `fleet:stop`, isn't. Default 6.
+- `FLEET_BUDGET_FLOOR`: the fewest REST requests a round needs left to start anything. Every job's `GITHUB_TOKEN` in the repo shares 1,000 requests an hour. Below the floor a round starts no task and opens no final PR, so the outcome jobs keep room to post their markers. Stopping still works. Each round logs `fleet budget: <left>/<limit>, resets <time> UTC` at its start and end, and so does each outcome job. Default 200.
 
 ## Environments
 

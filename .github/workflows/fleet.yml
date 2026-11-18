@@ -83,6 +83,7 @@ jobs:
           FLEET_OWNER: ${{ vars.FLEET_OWNER }}
           FLEET_MAX_JOBS: ${{ vars.FLEET_MAX_JOBS }}
           FLEET_MAX_STARTS: ${{ vars.FLEET_MAX_STARTS }}
+          FLEET_BUDGET_FLOOR: ${{ vars.FLEET_BUDGET_FLOOR }}
           FLEET_EVENT_LABEL: ${{ github.event.label.name }}
           FLEET_EVENT_ISSUE: ${{ github.event.issue.number }}
           FLEET_STOP_ALL: ${{ inputs.stop_all }}
