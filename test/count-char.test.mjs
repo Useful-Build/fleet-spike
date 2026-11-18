@@ -21,3 +21,12 @@ test("throws a TypeError for a non-string text", () => {
 test("throws a TypeError for a char longer than one character", () => {
   assert.throws(() => countChar("banana", "an"), TypeError);
 });
+
+test("throws a TypeError for an empty or non-string char", () => {
+  assert.throws(() => countChar("banana", ""), TypeError);
+  assert.throws(() => countChar("banana", 1), TypeError);
+});
+
+test("counts a character outside the BMP", () => {
+  assert.equal(countChar("😀a😀", "😀"), 2);
+});
