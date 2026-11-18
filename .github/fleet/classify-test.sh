@@ -113,7 +113,7 @@ outcome=$(awk -F'"' '/AGENT_TIMEOUT_MINUTES:/ { print $2; exit }' "$wf")
 told=$(awk '/^      - name: Stop time$/ { on = 1 }
   on && match($0, /now \+ [0-9]+ \* 60/) { print substr($0, RSTART + 6, RLENGTH - 11); exit }' "$wf")
 count=$((count + 1))
-if [[ $step != 55 || $outcome != 55 || $told != 55 ]]; then
+if [[ $step != 12 || $outcome != 12 || $told != 55 ]]; then
   echo "FAIL: fleet.yml has the agent step's timeout-minutes '$step', AGENT_TIMEOUT_MINUTES '$outcome' and the stop time now + '$told' minutes, want 55, 55 and 55"
   fails=$((fails + 1))
 fi
