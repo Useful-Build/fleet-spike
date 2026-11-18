@@ -199,6 +199,53 @@ api_active_runs() {
   echo "$all"
 }
 
+# The status of one run (queued, in_progress, completed, ...), or "unknown" when it can't be read
+# yet. The fixture is run-<id>.json, and a missing one is "unknown".
+api_run_status() {
+  if [[ -n ${FLEET_FIXTURES:-} ]]; then
+    if [[ -f $FLEET_FIXTURES/run-$1.json ]]; then fixture "run-$1" | jq -r .status; else echo unknown; fi
+  else
+    gh api "repos/$FLEET_REPO/actions/runs/$1" --jq .status 2>/dev/null || echo unknown
+  fi
+}
+
+# Waits until each run a round dispatched is in the active run list the next round will read
+# (api_active_runs), or has finished. The list is a search, and it has missed a run for 20
+# seconds and more after its dispatch, so finding the run by its id isn't enough. Polls every
+# 5 seconds for up to 60. Each run that never shows gets an error naming its task, and
+# WAIT_MISSING counts them.
+#   $1 lines of "<issue> <run id>"
+WAIT_SECONDS=60
+WAIT_POLL=5
+wait_for_runs() {
+  local pending=$1 still active n id waited=0
+  WAIT_MISSING=0
+  while [[ -n $pending ]]; do
+    active=$(api_active_runs)
+    still=""
+    while read -r n id; do
+      [[ -n $n ]] || continue
+      if jq -e --argjson id "$id" 'any(.[]; .databaseId == $id)' <<<"$active" >/dev/null; then
+        echo "#$n run $id is in the run list"
+      elif [[ $(api_run_status "$id") == completed ]]; then
+        echo "#$n run $id has finished"
+      else
+        still+="$n $id"$'\n'
+      fi
+    done <<<"$pending"
+    pending=$still
+    if [[ -z $pending ]] || ((waited >= WAIT_SECONDS)); then break; fi
+    # The fixtures never change, so the tests don't sleep.
+    if [[ -z ${FLEET_FIXTURES:-} ]]; then sleep "$WAIT_POLL"; fi
+    waited=$((waited + WAIT_POLL))
+  done
+  while read -r n id; do
+    [[ -n $n ]] || continue
+    echo "::error::#$n: its run $id isn't in the run list after ${WAIT_SECONDS}s and hasn't finished, so the next round may start task #$n again"
+    WAIT_MISSING=$((WAIT_MISSING + 1))
+  done <<<"$pending"
+}
+
 # Open issues labelled fleet at the end of a round, after the round's own closes. Live, a fresh
 # api_issues. The fixture is final.json's open_issues, the list as GitHub returns it then.
 api_issues_after_round() {

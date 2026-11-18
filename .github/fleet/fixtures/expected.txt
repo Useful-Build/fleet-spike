@@ -11,7 +11,7 @@ task runs active: 2, cap 25
 #103 skip-waiting pr=queued
 #104 start pr=failing
   would run: gh api -X PUT repos/fixture/repo/issues/104/lock --silent
-  would run: gh workflow run fleet.yml -R fixture/repo -f issue=104 -f seat=a
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=104 -f inputs[seat]=a
 #105 skip-stopped pr=draft
 #105 stop
   would run: gh run cancel 9005 -R fixture/repo
@@ -19,52 +19,52 @@ task runs active: 2, cap 25
 #107 skip-waiting pr=automerge
 #108 start pr=ready
   would run: gh api -X PUT repos/fixture/repo/issues/108/lock --silent
-  would run: gh workflow run fleet.yml -R fixture/repo -f issue=108 -f seat=a
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=108 -f inputs[seat]=a
 #109 skip-author pr=-
 #110 skip-blocked pr=none
 #111 start pr=ready
   would run: gh api -X PUT repos/fixture/repo/issues/111/lock --silent
-  would run: gh workflow run fleet.yml -R fixture/repo -f issue=111 -f seat=a
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=111 -f inputs[seat]=a
 #112 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/112/lock --silent
-  would run: gh workflow run fleet.yml -R fixture/repo -f issue=112 -f seat=b
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=112 -f inputs[seat]=b
 #113 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/113/lock --silent
-  would run: gh workflow run fleet.yml -R fixture/repo -f issue=113 -f seat=c
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=113 -f inputs[seat]=c
 #114 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/114/lock --silent
-  would run: gh workflow run fleet.yml -R fixture/repo -f issue=114 -f seat=a
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=114 -f inputs[seat]=a
 #115 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/115/lock --silent
-  would run: gh workflow run fleet.yml -R fixture/repo -f issue=115 -f seat=b
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=115 -f inputs[seat]=b
 #116 failed-cap pr=none
   would run: gh issue edit 116 -R fixture/repo --add-label fleet:failed
 #117 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/117/lock --silent
-  would run: gh workflow run fleet.yml -R fixture/repo -f issue=117 -f seat=b
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=117 -f inputs[seat]=b
 #118 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/118/lock --silent
-  would run: gh workflow run fleet.yml -R fixture/repo -f issue=118 -f seat=b
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=118 -f inputs[seat]=b
 #119 failed-cap pr=none
   would run: gh issue edit 119 -R fixture/repo --add-label fleet:failed
 #120 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/120/lock --silent
-  would run: gh workflow run fleet.yml -R fixture/repo -f issue=120 -f seat=c
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=120 -f inputs[seat]=c
 #121 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/121/lock --silent
-  would run: gh workflow run fleet.yml -R fixture/repo -f issue=121 -f seat=a
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=121 -f inputs[seat]=a
 #122 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/122/lock --silent
-  would run: gh workflow run fleet.yml -R fixture/repo -f issue=122 -f seat=b
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=122 -f inputs[seat]=b
 #123 start pr=draft
   would run: gh api -X PUT repos/fixture/repo/issues/123/lock --silent
-  would run: gh workflow run fleet.yml -R fixture/repo -f issue=123 -f seat=c
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=123 -f inputs[seat]=c
 #124 skip-author pr=-
 #125 start pr=none
-  would run: gh workflow run fleet.yml -R fixture/repo -f issue=125 -f seat=c
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=125 -f inputs[seat]=c
 #126 start pr=draft
   would run: gh api -X PUT repos/fixture/repo/issues/126/lock --silent
-  would run: gh workflow run fleet.yml -R fixture/repo -f issue=126 -f seat=a
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=126 -f inputs[seat]=a
 #127 done pr=merged
   would run: gh issue comment 127 -R fixture/repo --body Done: the PR from task/127 has merged.
   would run: gh issue close 127 -R fixture/repo
@@ -72,24 +72,24 @@ fleet: missing fixture .github/fleet/fixtures/issue-129.json
 ::warning::#129 skipped this round: reading its state failed
 #131 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/131/lock --silent
-  would run: gh workflow run fleet.yml -R fixture/repo -f issue=131 -f seat=c
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=131 -f inputs[seat]=c
 #132 start pr=failing
   would run: gh api -X PUT repos/fixture/repo/issues/132/lock --silent
-  would run: gh workflow run fleet.yml -R fixture/repo -f issue=132 -f seat=a
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=132 -f inputs[seat]=a
 #133 start pr=conflicting
   would run: gh api -X PUT repos/fixture/repo/issues/133/lock --silent
-  would run: gh workflow run fleet.yml -R fixture/repo -f issue=133 -f seat=b
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=133 -f inputs[seat]=b
 #134 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/134/lock --silent
-  would run: gh workflow run fleet.yml -R fixture/repo -f issue=134 -f seat=b
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=134 -f inputs[seat]=b
 #135 skip-paused pr=none
 #136 skip-paused pr=none
 #137 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/137/lock --silent
-  would run: gh workflow run fleet.yml -R fixture/repo -f issue=137 -f seat=a
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=137 -f inputs[seat]=a
 #138 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/138/lock --silent
-  would run: gh workflow run fleet.yml -R fixture/repo -f issue=138 -f seat=a
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=138 -f inputs[seat]=a
 #139 failed-cap pr=none
   would run: gh issue edit 139 -R fixture/repo --add-label fleet:failed
 #140 done pr=merged
@@ -97,14 +97,15 @@ fleet: missing fixture .github/fleet/fixtures/issue-129.json
   would run: gh issue close 140 -R fixture/repo
 #143 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/143/lock --silent
-  would run: gh workflow run fleet.yml -R fixture/repo -f issue=143 -f seat=a
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=143 -f inputs[seat]=a
 #144 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/144/lock --silent
-  would run: gh workflow run fleet.yml -R fixture/repo -f issue=144 -f seat=c
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=144 -f inputs[seat]=c
 #142 skip-waiting pr=automerge
 #130 skip-full pr=none
 started: 23
 failed_tasks=116 119 139
+would wait for the 23 started runs to show in the run list
 fleet/demo final PR: not ready, an open task names it
 fleet/done final PR: ready
   would run: gh pr create -R fixture/repo --base main --head fleet/done --title fleet/done into main --body Every fleet task issue for `fleet/done` is closed. Task PRs merged into it:
@@ -470,3 +471,11 @@ $ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=success PAUSED=false R
 task job: result=success checkout_ran=true agent=success paused=false timed_out=false pr=failing stopped=false
 fleet: SEAT must be a, b or c
 [exit 1]
+
+$ wait_for_runs 101 9001 150 9150 151 9151 152 9152
+#101 run 9001 is in the run list
+#150 run 9150 has finished
+::error::#151: its run 9151 isn't in the run list after 60s and hasn't finished, so the next round may start task #151 again
+::error::#152: its run 9152 isn't in the run list after 60s and hasn't finished, so the next round may start task #152 again
+missing=2
+[exit 0]

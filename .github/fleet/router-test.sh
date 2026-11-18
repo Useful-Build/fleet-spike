@@ -39,6 +39,8 @@
 #   143 progress on c, then cancelled on a: only the progress moves the rotation, so a
 #   144 paused on b 30 minutes ago, retry_after unreadable: b is blocked for an hour, so c
 #   141 is created first, so its failed lock comes before the slots run out.
+# Waiting for dispatched runs: 9001 is in runs.json; 9150 isn't, and has finished; 9151 isn't,
+# though reading it by id says it's in progress (the list lags); 9152 can't be read at all.
 # final.json: fleet/done ready, fleet/demo has open tasks, fleet/has-pr has a PR into main,
 # fleet/empty isn't ahead of main, fleet/closing is ready once #140 closes this round (the open
 # list is read again), fleet/orphan is ahead with no task naming it, fleet/reviewed has a closed
@@ -81,6 +83,20 @@ outcome() {
     ${extra[@]+"${extra[@]}"} bash "$here/task.sh" outcome "$1"
 }
 
+# waits <issue> <run id> ...: wait_for_runs (lib.sh) on these dispatched runs. runs.json is the
+# run list, and run-<id>.json the run read by its id.
+waits() {
+  local pending="" code=0
+  echo "\$ wait_for_runs $*"
+  while (($# > 0)); do
+    pending+="$1 $2"$'\n'
+    shift 2
+  done
+  bash -c 'source "$1"; fleet_init; wait_for_runs "$2"; echo "missing=$WAIT_MISSING"' _ "$here/lib.sh" "$pending" 2>&1 || code=$?
+  echo "[exit $code]"
+  echo
+}
+
 actual=$(
   run env "FLEET_ACT_FAIL=gh api -X PUT repos/fixture/repo/issues/141/lock*" bash "$here/router.sh"
   run env FLEET_EVENT_LABEL=fleet:stop FLEET_EVENT_ISSUE=101 bash "$here/router.sh"
@@ -119,6 +135,7 @@ actual=$(
   outcome 142 success true success false "" 60
   outcome 104 bogus yes ::error::x ::warning::y "" 20
   outcome SEAT=A 104 success true success false "" 20
+  waits 101 9001 150 9150 151 9151 152 9152
 )
 # Paths in the output depend on where the repo is checked out. Reasons are dropped (see above).
 actual=${actual//$here/.github\/fleet}

@@ -180,6 +180,7 @@ esac
 issues=$(api_issues)
 started=0
 failed_tasks=""
+dispatched=""
 if [[ $(jq length <<<"$issues") != 0 ]]; then
   active=$(api_active_runs)
   running=$(jq '[.[] | select(.displayTitle | test("^task #[0-9]+$"))] | length' <<<"$active")
@@ -216,9 +217,28 @@ if [[ $(jq length <<<"$issues") != 0 ]]; then
         if [[ $(jq -r .locked <<<"$issue") != true ]]; then
           try_act gh api -X PUT "repos/$FLEET_REPO/issues/$n/lock" --silent || continue
         fi
-        if try_act gh workflow run fleet.yml -R "$FLEET_REPO" -f "issue=$n" -f "seat=$SEAT"; then
+        # The REST dispatch returns the new run's id (workflow_run_id), so the round can wait for
+        # that run to show in the run list below.
+        if [[ $DRY_RUN == 1 ]]; then
+          if try_act gh api -X POST "repos/$FLEET_REPO/actions/workflows/fleet.yml/dispatches" \
+            -f ref=main -f "inputs[issue]=$n" -f "inputs[seat]=$SEAT"; then
+            slots=$((slots - 1))
+            started=$((started + 1))
+          fi
+        elif run_id=$(gh api -X POST "repos/$FLEET_REPO/actions/workflows/fleet.yml/dispatches" \
+          -f ref=main -f "inputs[issue]=$n" -f "inputs[seat]=$SEAT" --jq .workflow_run_id); then
           slots=$((slots - 1))
           started=$((started + 1))
+          if [[ $run_id =~ ^[0-9]+$ ]]; then
+            echo "#$n started run $run_id"
+            dispatched+="$n $run_id"$'\n'
+          else
+            echo "::error::#$n: the dispatch returned no run id, so this round can't wait for its run"
+            failures=$((failures + 1))
+          fi
+        else
+          echo "::error::failed: dispatch task #$n"
+          failures=$((failures + 1))
         fi
         ;;
       done)
@@ -246,6 +266,14 @@ if [[ $(jq length <<<"$issues") != 0 ]]; then
   done
   echo "started: $started"
   if [[ -n $failed_tasks ]]; then emit failed_tasks "$failed_tasks"; fi
+  # Rounds run one at a time, so a round that ends only once its runs are listed can't be
+  # followed by one that misses them and starts the same task again.
+  if [[ $DRY_RUN == 1 ]] && ((started > 0)); then
+    echo "would wait for the $started started runs to show in the run list"
+  elif [[ -n $dispatched ]]; then
+    wait_for_runs "$dispatched"
+    failures=$((failures + WAIT_MISSING))
+  fi
 fi
 
 final_prs
