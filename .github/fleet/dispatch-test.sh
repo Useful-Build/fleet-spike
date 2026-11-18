@@ -29,7 +29,13 @@
 # - Below FLEET_BUDGET_FLOOR (200 unless set) in either budget, 0 left included, a round starts
 #   nothing, opens no final PR and is green. At or above it, the round runs as usual. A floor of 0
 #   turns this off. Stop all runs whatever the budget, and whatever the floor's value; a floor
-#   that isn't 0 or a positive whole number fails any other round red before it reads anything.
+#   that isn't digits only, 0 or 1 to 9999999999 with no leading zero (08, +5, 5.0 and 11 digits
+#   are refused), fails any other round red, after the budget read and before any other. A figure
+#   that can't be read doesn't hold a round back, and doesn't stop the other figure from doing so.
+# - A final PR read that fails (the open PRs into main, the closed ones, or an issue whose body
+#   can't be read) fails that branch's check red, and no final PR opens. It never reads as "a PR is
+#   already open", "no closed PR has this head" or "no task names it".
+# - task.sh pr-state whose PR read fails fails the step and writes no pr_state.
 # Seats: no markers, so the seat is "abc"[issue number mod 3].
 set -euo pipefail
 
@@ -90,7 +96,22 @@ case "$*" in
   "--paginate --slurp repos/$R/issues?state=open&labels=fleet&per_page=100") printf '[%s]\n' "$(cat "$d/issues.json")" ;;
   "--paginate --slurp repos/$R/issues?state=closed&labels=fleet&per_page=100") printf '[%s]\n' "$(or_default "$d/closed.json" '[]')" ;;
   "--paginate --slurp repos/$R/git/matching-refs/heads/fleet/?per_page=100") printf '[%s]\n' "$(or_default "$d/branches.json" '[]')" ;;
+  "--paginate --slurp repos/$R/pulls?state=open&base=main&head="*)
+    # prs-open-fail: the read of the open PRs into main fails.
+    if [[ -f $d/prs-open-fail ]]; then echo "stub: HTTP 502" >&2; exit 1; fi
+    echo '[[]]'
+    ;;
+  "--paginate --slurp repos/$R/pulls?state=closed&base=main&head="*)
+    # prs-closed-fail: the read of the closed PRs into main fails.
+    if [[ -f $d/prs-closed-fail ]]; then echo "stub: HTTP 502" >&2; exit 1; fi
+    echo '[[]]'
+    ;;
   "--paginate --slurp repos/$R/pulls?"*) echo '[[]]' ;;
+  "graphql "*)
+    # The task PR lookup. graphql-fail: it fails. pulls.json: the PR nodes, else none.
+    if [[ -f $d/graphql-fail ]]; then echo "stub: HTTP 502" >&2; exit 1; fi
+    printf '{"data": {"repository": {"pullRequests": {"nodes": %s}}}}\n' "$(or_default "$d/pulls.json" '[]')"
+    ;;
   "--paginate --slurp repos/$R/issues/"*"/dependencies/blocked_by?per_page=100") echo '[[]]' ;;
   "--paginate --slurp repos/$R/issues/"*"/comments?per_page=100")
     n=${3#repos/"$R"/issues/}
@@ -171,6 +192,14 @@ route() {
   out=$(env -u FLEET_FIXTURES -u FLEET_EVENT_LABEL -u FLEET_EVENT_ISSUE -u FLEET_STOP_ALL -u FLEET_AFTER_RUN \
     -u FLEET_BUDGET_FLOOR PATH="$tmp/bin:$PATH" FLEET_REPO=fixture/repo FLEET_OWNER=fleet-owner \
     FLEET_NOW=1794916800 GITHUB_OUTPUT="$STUB/output" "$@" bash "$here/router.sh" 2>&1) || code=$?
+}
+# task_step <subcommand> <issue> [NAME=value ...]: run task.sh on its live path, any extra env last.
+task_step() {
+  local sub=$1 n=$2
+  shift 2
+  code=0
+  out=$(env -u FLEET_FIXTURES PATH="$tmp/bin:$PATH" FLEET_REPO=fixture/repo FLEET_OWNER=fleet-owner \
+    FLEET_NOW=1794916800 GITHUB_OUTPUT="$STUB/output" "$@" bash "$here/task.sh" "$sub" "$n" 2>&1) || code=$?
 }
 fail() {
   echo "dispatch-test: $name: $*" >&2
@@ -450,10 +479,49 @@ done_case
 scenario budget-floor-negative
 issue 307 | jq -s . >"$STUB/issues.json"
 route FLEET_BUDGET_FLOOR=-5
-want_out "fleet: FLEET_BUDGET_FLOOR must be 0 (no floor) or a positive whole number. Only the stop rounds run until it's fixed."
+want_out "fleet: FLEET_BUDGET_FLOOR must be digits only: 0 (no floor), or 1 to 9999999999 with no leading zero. Only the stop rounds run until it's fixed."
 [[ $(grep -cvxF "api rate_limit" "$STUB/calls.log") == 0 ]] || fail "a call other than the budget read"
 want_exit 1
 done_case
+
+# REST unreadable, GraphQL 150: the figure that can be read still holds the round back, green.
+scenario budget-rest-unreadable-graphql-low
+issue 309 | jq -s . >"$STUB/issues.json"
+echo '{"resources": {"graphql": {"limit": 1000, "remaining": 150, "reset": 1794918000}}}' >"$STUB/rate_limit.json"
+route
+want_out "::warning::fleet budget: REST unreadable, GraphQL 150/1000 resets 12:20 UTC (router start)"
+want_out "::warning::fleet budget: 150 GraphQL points left, below the floor of 200. $held"
+want_no_call "dispatches"
+[[ $(grep -cvxF "api rate_limit" "$STUB/calls.log") == 0 ]] || fail "a call other than the budget read"
+want_exit 0
+done_case
+
+# The mirror: GraphQL unreadable, REST 150. REST alone holds the round back, green.
+scenario budget-graphql-unreadable-rest-low
+issue 309 | jq -s . >"$STUB/issues.json"
+echo '{"resources": {"core": {"limit": 1000, "remaining": 150, "reset": 1794918000}}}' >"$STUB/rate_limit.json"
+route
+want_out "::warning::fleet budget: REST 150/1000 resets 12:20 UTC, GraphQL unreadable (router start)"
+want_out "::warning::fleet budget: 150 REST requests left, below the floor of 200. $held"
+want_no_call "dispatches"
+[[ $(grep -cvxF "api rate_limit" "$STUB/calls.log") == 0 ]] || fail "a call other than the budget read"
+want_exit 0
+done_case
+
+# Floors that aren't digits only, start with a zero or are too long, numbered in this order:
+# 08, 007, +5, " 5", 5.0, 12345678901. Each fails red after the budget read with the message
+# that says what is accepted, and reads nothing else.
+i=0
+for v in 08 007 +5 " 5" 5.0 12345678901; do
+  i=$((i + 1))
+  scenario "budget-floor-shape-$i"
+  issue 310 | jq -s . >"$STUB/issues.json"
+  route "FLEET_BUDGET_FLOOR=$v"
+  want_out "fleet: FLEET_BUDGET_FLOOR must be digits only: 0 (no floor), or 1 to 9999999999 with no leading zero. Only the stop rounds run until it's fixed."
+  [[ $(grep -cvxF "api rate_limit" "$STUB/calls.log") == 0 ]] || fail "a call other than the budget read"
+  want_exit 1
+  done_case
+done
 
 # A floor that is text doesn't stop stop all: the label and the cancel go out, green.
 scenario budget-floor-text-stop-all
@@ -519,6 +587,76 @@ want_call "$(dispatch_call 321 a)"
 want_out "#321 run 6021 is in the run list"
 want_sleeps 1
 want_exit 0
+done_case
+
+# The open PRs into main can't be read: fleet/x's check fails red, it never reads as "a PR into
+# main is already open", and no final PR opens.
+scenario final-open-prs-fail
+echo '[]' >"$STUB/issues.json"
+final_ready
+touch "$STUB/prs-open-fail"
+route
+want_out "::error::fleet/x final PR: check failed"
+if grep -qF "already open" <<<"$out"; then fail "read as a PR already open"; fi
+want_no_call "pr create"
+want_out "fleet: 1 changes failed"
+want_exit 1
+done_case
+
+# The closed PRs into main can't be read: the check fails red, and no final PR opens again over
+# one the owner may have closed.
+scenario final-closed-prs-fail
+echo '[]' >"$STUB/issues.json"
+final_ready
+touch "$STUB/prs-closed-fail"
+route
+want_out "::error::fleet/x final PR: check failed"
+want_no_call "pr create"
+want_out "fleet: 1 changes failed"
+want_exit 1
+done_case
+
+# An open fleet issue whose body isn't text: the round skips it with a warning, and fleet/x's check
+# can't tell whether it names the branch, so it fails red and no final PR opens.
+scenario final-open-issue-unreadable
+issue 351 | jq '[.body = 5]' >"$STUB/issues.json"
+final_ready
+route
+want_out "::warning::#351 skipped this round: reading its state failed"
+want_out "::error::fleet/x final PR: check failed"
+want_no_call "pr create"
+want_out "fleet: 1 changes failed"
+want_exit 1
+done_case
+
+# The same with a closed fleet issue: no telling whether a closed task names the branch, so red.
+scenario final-closed-issue-unreadable
+echo '[]' >"$STUB/issues.json"
+final_ready
+echo '[{"number": 201, "state": "closed", "body": 5, "labels": [{"name": "fleet"}]}]' >"$STUB/closed.json"
+route
+want_out "::error::fleet/x final PR: check failed"
+want_no_call "pr create"
+want_out "fleet: 1 changes failed"
+want_exit 1
+done_case
+
+# task.sh pr-state reads a draft PR into the base: pr_state=draft, green.
+scenario pr-state-draft
+echo '[{"number": 41, "state": "OPEN", "isDraft": true, "isInMergeQueue": false, "isCrossRepository": false,
+  "baseRefName": "fleet/x", "locked": true, "mergeable": "MERGEABLE", "autoMergeRequest": null,
+  "commits": {"nodes": [{"commit": {"statusCheckRollup": null}}]}}]' >"$STUB/pulls.json"
+task_step pr-state 341 BASE=fleet/x
+want_output "pr_state=draft"
+want_exit 0
+done_case
+
+# Its PR read fails: the step fails and writes no pr_state, so the checkpoint warns.
+scenario pr-state-fails
+touch "$STUB/graphql-fail"
+task_step pr-state 341 BASE=fleet/x
+if grep -q "^pr_state=" "$STUB/output" 2>/dev/null; then fail "wrote a pr_state"; fi
+want_exit 1
 done_case
 
 # Live run objects are about 13 KB each. big_runs: 12 in_progress runs 9100 to 9111 of tasks #330

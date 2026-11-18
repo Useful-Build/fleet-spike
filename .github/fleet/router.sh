@@ -204,7 +204,7 @@ fi
 # above always run, whatever the budget or the floor's value. A figure that can't be read doesn't
 # hold a round back. A floor of 0 turns the guard off.
 [[ $FLEET_BUDGET_FLOOR =~ ^(0|[1-9][0-9]{0,9})$ ]] ||
-  die "FLEET_BUDGET_FLOOR must be 0 (no floor) or a positive whole number. Only the stop rounds run until it's fixed."
+  die "FLEET_BUDGET_FLOOR must be digits only: 0 (no floor), or 1 to 9999999999 with no leading zero. Only the stop rounds run until it's fixed."
 low=""
 if [[ -n $BUDGET_REST ]] && ((BUDGET_REST < FLEET_BUDGET_FLOOR)); then
   low="$BUDGET_REST REST requests"

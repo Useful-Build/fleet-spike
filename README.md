@@ -26,7 +26,7 @@ For a second repo, also:
 2. Write an issue as the owner (the login in `FLEET_OWNER`). The body is the brief: what to build, how it's accepted and the commands that prove it. Add a line `Base: fleet/<topic>`.
 3. Add the label `fleet`.
 
-The router locks the issue, then starts the task within a few seconds. When a task run that counted as a start ends (`progress`, `failed` or `done`), its marker is posted and then its last job starts a new round right away, so its restart doesn't wait. A run paused on a usage limit, or a round held back below the budget floor, waits for the next round from another trigger. A round is also scheduled at minutes 7 and 37 of each hour, as the safety net, but GitHub delays scheduled runs under load and may drop some, so that isn't a promise. No scheduled round has fired on this repo yet, and those waits end green with no alert, so until one has been seen, a lone paused task can stall: start a round by running the `fleet` workflow with no inputs. A task that never finishes can use all its starts (`FLEET_MAX_STARTS`) in minutes. Each run of the agent stops after 55 minutes, before its GitHub access ends at the hour: it saves its work, and the next run carries on, using another start. The agent works on `task/<number>` and opens a draft PR into the base branch. When the checks in the brief pass, it marks the PR ready and turns on auto-merge, and the merge queue lands it.
+The router locks the issue, then starts the task within a few seconds. When a task run that counted as a start ends (`progress`, `failed` or `done`), its marker is posted and then its last job starts a new round right away, so its restart doesn't wait. A run paused on a usage limit, or a round held back below the budget floor, waits for the next round from another trigger. A round is also scheduled at minutes 7 and 37 of each hour, as the safety net, but GitHub delays scheduled runs under load and may drop some, so that isn't a promise. As of 18 November 2026 no scheduled round had fired on this repo (FAILURES.md 34), and those waits end green with no alert, so until one has been seen, a lone paused task can stall: start a round by running the `fleet` workflow with no inputs. A task that never finishes can use all its starts (`FLEET_MAX_STARTS`) in minutes. Each run of the agent stops after 55 minutes, before its GitHub access ends at the hour: it saves its work, and the next run carries on, using another start. The agent works on `task/<number>` and opens a draft PR into the base branch. When the checks in the brief pass, it marks the PR ready and turns on auto-merge, and the merge queue lands it.
 
 A task waits while another open issue blocks it (GitHub's "blocked by" on the issue).
 
@@ -43,7 +43,7 @@ After the final PR has merged, delete the branch's queue ruleset: `gh api -X DEL
 
 ## Retry a failed task
 
-A task that hits a cap gets `fleet:failed`. Removing the label doesn't reset its count, so the next round adds it again. To retry, close the issue and open a new one.
+A task that hits a cap gets `fleet:failed`. Removing the label doesn't reset its count, so the next round adds it again. To retry, close the issue and open a new one. The new task starts on a new branch, `task/<its number>`, from its base, not on the old task's branch.
 
 ## Labels
 
@@ -57,8 +57,8 @@ The fleet posts its records as comments on locked issues, unlocking each for a f
 
 - `FLEET_OWNER`: the only login whose issues start tasks. Required.
 - `FLEET_MAX_JOBS`: most task jobs at once. Default 16.
-- `FLEET_MAX_STARTS`: most starts per task. A run that ends `progress`, `failed` or `done` is a start, and so is a cancelled run when the task has no `fleet:stop`. One that ends on a usage limit, or is cancelled by `fleet:stop`, isn't. Default 6.
-- `FLEET_BUDGET_FLOOR`: the fewest REST requests and GraphQL points a round needs left to do anything. Every job's `GITHUB_TOKEN` in the repo shares 1,000 of each an hour. Below the floor in either, a round starts, closes, labels and cancels nothing and opens no final PR, so the outcome jobs keep room to post their markers. Stopping still works. `0` turns the guard off. Any other value that isn't a whole number fails every round but the stop rounds. Each round logs `fleet budget: REST <left>/<limit> resets <time> UTC, GraphQL <left>/<limit> resets <time> UTC` at its start and end, and each outcome job logs it at its end. Default 200.
+- `FLEET_MAX_STARTS`: most starts per task. A run that ends `progress`, `failed` or `done` is a start, and so is a cancelled run when the task has no `fleet:stop`. One that ends on a usage limit, or is cancelled by `fleet:stop`, isn't. Default 6. Each start runs the agent for at most 55 minutes, about 45 of them real work if it follows the prompt, so at 6 a task gets at most about five and a half hours of job time. After that it gets `fleet:failed` and a Telegram alert. Raise this for a bigger task.
+- `FLEET_BUDGET_FLOOR`: the fewest REST requests and GraphQL points a round needs left to do anything. Every job's `GITHUB_TOKEN` in the repo shares 1,000 of each an hour. Below the floor in either, a round starts, closes, labels and cancels nothing and opens no final PR, so the outcome jobs keep room to post their markers. Stopping still works. `0` turns the guard off. Any other value fails every round but the stop rounds: the floor must be digits only, `0` or `1` to `9999999999` with no leading zero. Each round logs `fleet budget: REST <left>/<limit> resets <time> UTC, GraphQL <left>/<limit> resets <time> UTC` at its start and end, and each outcome job logs it at its end. Default 200.
 
 ## Environments
 

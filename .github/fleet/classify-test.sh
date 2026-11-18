@@ -105,13 +105,16 @@ while read -r minutes limit agent want; do
   fi
 done <<<"$timeouts"
 
-# The table above is for 55: the workflow must use that number in both places.
+# The table above is for 55: the workflow must use that number in all three places, the agent
+# step's timeout, the outcome job's AGENT_TIMEOUT_MINUTES and the stop time the agent is told.
 wf="$here/../workflows/fleet.yml"
 step=$(awk '/^      - name: Agent$/ { on = 1 } on && /timeout-minutes:/ { print $2; exit }' "$wf")
 outcome=$(awk -F'"' '/AGENT_TIMEOUT_MINUTES:/ { print $2; exit }' "$wf")
+told=$(awk '/^      - name: Stop time$/ { on = 1 }
+  on && match($0, /now \+ [0-9]+ \* 60/) { print substr($0, RSTART + 6, RLENGTH - 11); exit }' "$wf")
 count=$((count + 1))
-if [[ $step != 55 || $outcome != 55 ]]; then
-  echo "FAIL: fleet.yml has the agent step's timeout-minutes '$step' and AGENT_TIMEOUT_MINUTES '$outcome', want 55 and 55"
+if [[ $step != 55 || $outcome != 55 || $told != 55 ]]; then
+  echo "FAIL: fleet.yml has the agent step's timeout-minutes '$step', AGENT_TIMEOUT_MINUTES '$outcome' and the stop time now + '$told' minutes, want 55, 55 and 55"
   fails=$((fails + 1))
 fi
 

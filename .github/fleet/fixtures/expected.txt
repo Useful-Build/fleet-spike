@@ -254,7 +254,7 @@ fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC 
 
 $ env FLEET_BUDGET_FLOOR=abc bash .github/fleet/router.sh
 fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (router start)
-fleet: FLEET_BUDGET_FLOOR must be 0 (no floor) or a positive whole number. Only the stop rounds run until it's fixed.
+fleet: FLEET_BUDGET_FLOOR must be digits only: 0 (no floor), or 1 to 9999999999 with no leading zero. Only the stop rounds run until it's fixed.
 fleet budget: REST 200/1000 resets 12:59 UTC, GraphQL 960/1000 resets 12:59 UTC (router end)
 [exit 1]
 
