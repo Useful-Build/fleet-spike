@@ -212,8 +212,9 @@ api_run_status() {
 # Waits until each run a round dispatched is in the active run list the next round will read
 # (api_active_runs), or has finished. The list is a search, and it has missed a run for 20
 # seconds and more after its dispatch, so finding the run by its id isn't enough. Polls every
-# 5 seconds for up to 60. Each run that never shows gets an error naming its task, and
-# WAIT_MISSING counts them.
+# 5 seconds for up to 60. A run list that can't be read is a warning naming the tasks, and the
+# next poll tries again. Each run that never shows gets an error naming its task, and
+# WAIT_MISSING counts them. Never exits, so the caller still emits its outputs.
 #   $1 lines of "<issue> <run id>"
 WAIT_SECONDS=60
 WAIT_POLL=5
@@ -221,13 +222,16 @@ wait_for_runs() {
   local pending=$1 still active n id waited=0
   WAIT_MISSING=0
   while [[ -n $pending ]]; do
-    active=$(api_active_runs)
+    if ! active=$(api_active_runs); then
+      warn "listing runs failed while waiting for $(awk 'NF { printf "%s#%s", s, $1; s = " " }' <<<"$pending"), trying again"
+      active="[]"
+    fi
     still=""
     while read -r n id; do
       [[ -n $n ]] || continue
       if jq -e --argjson id "$id" 'any(.[]; .databaseId == $id)' <<<"$active" >/dev/null; then
         echo "#$n run $id is in the run list"
-      elif [[ $(api_run_status "$id") == completed ]]; then
+      elif [[ $(api_run_status "$id" </dev/null) == completed ]]; then
         echo "#$n run $id has finished"
       else
         still+="$n $id"$'\n'

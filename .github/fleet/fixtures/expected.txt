@@ -11,7 +11,7 @@ task runs active: 2, cap 25
 #103 skip-waiting pr=queued
 #104 start pr=failing
   would run: gh api -X PUT repos/fixture/repo/issues/104/lock --silent
-  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=104 -f inputs[seat]=a
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=104 -f inputs[seat]=a
 #105 skip-stopped pr=draft
 #105 stop
   would run: gh run cancel 9005 -R fixture/repo
@@ -19,52 +19,52 @@ task runs active: 2, cap 25
 #107 skip-waiting pr=automerge
 #108 start pr=ready
   would run: gh api -X PUT repos/fixture/repo/issues/108/lock --silent
-  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=108 -f inputs[seat]=a
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=108 -f inputs[seat]=a
 #109 skip-author pr=-
 #110 skip-blocked pr=none
 #111 start pr=ready
   would run: gh api -X PUT repos/fixture/repo/issues/111/lock --silent
-  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=111 -f inputs[seat]=a
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=111 -f inputs[seat]=a
 #112 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/112/lock --silent
-  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=112 -f inputs[seat]=b
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=112 -f inputs[seat]=b
 #113 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/113/lock --silent
-  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=113 -f inputs[seat]=c
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=113 -f inputs[seat]=c
 #114 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/114/lock --silent
-  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=114 -f inputs[seat]=a
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=114 -f inputs[seat]=a
 #115 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/115/lock --silent
-  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=115 -f inputs[seat]=b
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=115 -f inputs[seat]=b
 #116 failed-cap pr=none
   would run: gh issue edit 116 -R fixture/repo --add-label fleet:failed
 #117 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/117/lock --silent
-  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=117 -f inputs[seat]=b
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=117 -f inputs[seat]=b
 #118 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/118/lock --silent
-  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=118 -f inputs[seat]=b
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=118 -f inputs[seat]=b
 #119 failed-cap pr=none
   would run: gh issue edit 119 -R fixture/repo --add-label fleet:failed
 #120 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/120/lock --silent
-  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=120 -f inputs[seat]=c
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=120 -f inputs[seat]=c
 #121 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/121/lock --silent
-  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=121 -f inputs[seat]=a
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=121 -f inputs[seat]=a
 #122 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/122/lock --silent
-  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=122 -f inputs[seat]=b
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=122 -f inputs[seat]=b
 #123 start pr=draft
   would run: gh api -X PUT repos/fixture/repo/issues/123/lock --silent
-  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=123 -f inputs[seat]=c
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=123 -f inputs[seat]=c
 #124 skip-author pr=-
 #125 start pr=none
-  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=125 -f inputs[seat]=c
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=125 -f inputs[seat]=c
 #126 start pr=draft
   would run: gh api -X PUT repos/fixture/repo/issues/126/lock --silent
-  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=126 -f inputs[seat]=a
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=126 -f inputs[seat]=a
 #127 done pr=merged
   would run: gh issue comment 127 -R fixture/repo --body Done: the PR from task/127 has merged.
   would run: gh issue close 127 -R fixture/repo
@@ -72,24 +72,24 @@ fleet: missing fixture .github/fleet/fixtures/issue-129.json
 ::warning::#129 skipped this round: reading its state failed
 #131 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/131/lock --silent
-  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=131 -f inputs[seat]=c
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=131 -f inputs[seat]=c
 #132 start pr=failing
   would run: gh api -X PUT repos/fixture/repo/issues/132/lock --silent
-  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=132 -f inputs[seat]=a
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=132 -f inputs[seat]=a
 #133 start pr=conflicting
   would run: gh api -X PUT repos/fixture/repo/issues/133/lock --silent
-  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=133 -f inputs[seat]=b
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=133 -f inputs[seat]=b
 #134 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/134/lock --silent
-  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=134 -f inputs[seat]=b
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=134 -f inputs[seat]=b
 #135 skip-paused pr=none
 #136 skip-paused pr=none
 #137 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/137/lock --silent
-  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=137 -f inputs[seat]=a
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=137 -f inputs[seat]=a
 #138 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/138/lock --silent
-  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=138 -f inputs[seat]=a
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=138 -f inputs[seat]=a
 #139 failed-cap pr=none
   would run: gh issue edit 139 -R fixture/repo --add-label fleet:failed
 #140 done pr=merged
@@ -97,10 +97,10 @@ fleet: missing fixture .github/fleet/fixtures/issue-129.json
   would run: gh issue close 140 -R fixture/repo
 #143 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/143/lock --silent
-  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=143 -f inputs[seat]=a
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=143 -f inputs[seat]=a
 #144 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/144/lock --silent
-  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=144 -f inputs[seat]=c
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=144 -f inputs[seat]=c
 #142 skip-waiting pr=automerge
 #130 skip-full pr=none
 started: 23
@@ -502,7 +502,7 @@ started by task run 9160, which is ending: it isn't counted as running
 task runs active: 3, cap 25
 #160 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/160/lock --silent
-  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=160 -f inputs[seat]=c
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=160 -f inputs[seat]=c
 #161 skip-running pr=none
 #162 skip-running pr=none
 #163 skip-running pr=none
@@ -517,7 +517,7 @@ task runs active: 3, cap 25
 #161 skip-running pr=none
 #162 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/162/lock --silent
-  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=162 -f inputs[seat]=c
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=162 -f inputs[seat]=c
 #163 skip-running pr=none
 started: 1
 would wait for the 1 started runs to show in the run list

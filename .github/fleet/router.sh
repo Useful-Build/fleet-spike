@@ -9,8 +9,8 @@
 # checkout), FLEET_EVENT_LABEL and FLEET_EVENT_ISSUE (the label event that started the run, if any),
 # FLEET_STOP_ALL=true (stop every task and exit), FLEET_AFTER_RUN (the id of the task run whose
 # next-round job started this round: that run is ending, so it isn't counted as running).
-# FLEET_FIXTURES=<dir> reads fixture JSON instead of the API and implies --dry-run. FLEET_NOW fixes the clock (epoch seconds). The failure list
-# this answers is FAILURES.md next to this file.
+# FLEET_FIXTURES=<dir> reads fixture JSON instead of the API and implies --dry-run. FLEET_NOW
+# fixes the clock (epoch seconds). The failure list this answers is FAILURES.md next to this file.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -103,8 +103,9 @@ ${merged:-none}"
     echo "$b final PR: opened $url"
     echo "$url" >"$tmp/url"
   fi
-  # A PR opened with GITHUB_TOKEN starts no ci run by itself, and main requires ci. A dispatch is
-  # the one start GITHUB_TOKEN may make, and its ci check lands on the branch's head commit.
+  # A PR opened with GITHUB_TOKEN gets only a ci run that waits for a person's approval, and main
+  # requires ci. A dispatch with GITHUB_TOKEN always creates a run, and its ci check lands on the
+  # branch's head commit.
   if ! act gh workflow run ci.yml -R "$FLEET_REPO" --ref "$b"; then
     echo "::error::$b final PR: starting ci failed. Run ci on $b by hand."
     touch "$tmp/ci-failed"
@@ -222,23 +223,41 @@ if [[ $(jq length <<<"$issues") != 0 ]]; then
     echo "#$n $DECISION pr=$PR_STATE: $REASON"
     case $DECISION in
       start)
-        [[ $SEAT =~ ^[abc]$ ]] || die "bad seat '$SEAT' for #$n"
+        # Nothing in this loop may exit the round: the runs already started must still be waited
+        # for, and the outputs below still emitted. A failure is counted and the loop carries on.
+        if [[ ! $SEAT =~ ^[abc]$ ]]; then
+          echo "::error::#$n: bad seat '$SEAT', not started"
+          failures=$((failures + 1))
+          continue
+        fi
         # Strangers can't comment on a locked issue, so nothing they write reaches the agent there.
         if [[ $(jq -r .locked <<<"$issue") != true ]]; then
           try_act gh api -X PUT "repos/$FLEET_REPO/issues/$n/lock" --silent || continue
         fi
-        # The REST dispatch returns the new run's id (workflow_run_id), so the round can wait for
-        # that run to show in the run list below.
+        # Stop all and fleet:stop run in their own groups, beside this round. The issue was read at
+        # the start of the round, so read its labels again right before the dispatch.
+        if ! fresh=$(api_issue "$n"); then
+          echo "::error::#$n: reading the issue again before its start failed, not started"
+          failures=$((failures + 1))
+          continue
+        fi
+        if has_label "$fresh" fleet:stop; then
+          echo "#$n got fleet:stop during this round, not started"
+          continue
+        fi
+        # return_run_details must be a JSON boolean (-F): without it the endpoint answers 204 with
+        # no body. With it, 200 and the new run's id, so the round can wait for that run below.
         if [[ $DRY_RUN == 1 ]]; then
           if try_act gh api -X POST "repos/$FLEET_REPO/actions/workflows/fleet.yml/dispatches" \
-            -f ref=main -f "inputs[issue]=$n" -f "inputs[seat]=$SEAT"; then
+            -f ref=main -F return_run_details=true -f "inputs[issue]=$n" -f "inputs[seat]=$SEAT"; then
             slots=$((slots - 1))
             started=$((started + 1))
           fi
-        elif run_id=$(gh api -X POST "repos/$FLEET_REPO/actions/workflows/fleet.yml/dispatches" \
-          -f ref=main -f "inputs[issue]=$n" -f "inputs[seat]=$SEAT" --jq .workflow_run_id); then
+        elif body=$(gh api -X POST "repos/$FLEET_REPO/actions/workflows/fleet.yml/dispatches" \
+          -f ref=main -F return_run_details=true -f "inputs[issue]=$n" -f "inputs[seat]=$SEAT"); then
           slots=$((slots - 1))
           started=$((started + 1))
+          run_id=$(jq -r '.workflow_run_id // empty' <<<"$body" 2>/dev/null || true)
           if [[ $run_id =~ ^[0-9]+$ ]]; then
             echo "#$n started run $run_id"
             dispatched+="$n $run_id"$'\n'

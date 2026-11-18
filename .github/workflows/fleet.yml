@@ -449,8 +449,10 @@ jobs:
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
         run: |
+          # return_run_details as a JSON boolean (-F), or the endpoint answers 204 with no body.
           gh api -X POST "repos/$REPO/actions/workflows/fleet.yml/dispatches" \
-            -f ref=main -f "inputs[after_run]=$RUN_ID" --jq '"started router run \(.workflow_run_id)"'
+            -f ref=main -F return_run_details=true -f "inputs[after_run]=$RUN_ID" \
+            --jq '"started router run \(.workflow_run_id)"'
 
   alert:
     needs: outcome
