@@ -2,6 +2,16 @@
 
 A test bed for running Claude Code agents as GitHub Actions jobs. Each task is a GitHub issue, each run of a task is one job, and the work lands through pull requests and the merge queue.
 
+## Set up a repo
+
+Once, by an admin, before the first task starts:
+
+1. **Rulesets:** apply `.github/rulesets/main.json`, then `.github/rulesets/fleet.json` (Settings, Rules, Rulesets, Import a ruleset). Both must be on before the first task is started: the seat environments only protect anything while `main` is protected.
+2. **Labels:** create `fleet`, `fleet:stop` and `fleet:failed`. The router doesn't create them.
+3. **Variables:** set the repo variables `FLEET_OWNER`, `FLEET_MAX_JOBS` and `FLEET_MAX_STARTS` (see below).
+4. **Environments:** create `fleet-seat-a`, `fleet-seat-b` and `fleet-seat-c` (each holds `FLEET_SEAT_TOKEN` and `FLEET_AGENTS_CONFIG_KEY`) and `fleet-alert` (holds `FLEET_TELEGRAM_BOT_TOKEN` and `FLEET_TELEGRAM_CHAT_ID`). Limit each to the branch `main`.
+5. **Actions:** turn on "Allow GitHub Actions to create and approve pull requests" (Settings, Actions, General), so the router can open the final PR.
+
 ## Start a task
 
 1. Create the feature branch `fleet/<topic>` from `main`.
@@ -12,7 +22,7 @@ The router locks the issue, then starts the task within a few seconds, and again
 
 A task waits while another open issue blocks it (GitHub's "blocked by" on the issue).
 
-When every task issue for a `fleet/<topic>` branch is closed, the router opens the PR from that branch into `main`, and Telegram says it's ready for review.
+When every task issue for a `fleet/<topic>` branch is closed, the router opens the PR from that branch into `main`, starts `ci` on it, and Telegram says it's ready for review. A final PR you close isn't opened again until the branch gets a new commit.
 
 ## Stop a task
 
@@ -29,15 +39,17 @@ A task that hits a cap gets `fleet:failed`. Removing the label doesn't reset its
 - `fleet:stop`: stopped by hand, never restarted.
 - `fleet:failed`: past a cap (6 starts, or two failed runs in a row). Telegram hears about it.
 
+The fleet posts its records as comments on locked issues, unlocking each for a few seconds while it posts.
+
 ## Repo variables
 
 - `FLEET_OWNER`: the only login whose issues start tasks. Required.
 - `FLEET_MAX_JOBS`: most task jobs at once. Default 16.
-- `FLEET_MAX_STARTS`: most starts per task. A run that ends `progress`, `failed` or `done` is a start, one that ends on a usage limit or a cancel isn't. Default 6.
+- `FLEET_MAX_STARTS`: most starts per task. A run that ends `progress`, `failed` or `done` is a start, and so is a cancelled run when the task has no `fleet:stop`. One that ends on a usage limit, or is cancelled by `fleet:stop`, isn't. Default 6.
 
 ## Environments
 
-Secrets live in environments that only `main` may use: `fleet-seat-a`, `fleet-seat-b` and `fleet-seat-c` each hold `FLEET_SEAT_TOKEN` and `FLEET_AGENTS_CONFIG_KEY`, and `fleet-alert` holds `FLEET_TELEGRAM_BOT_TOKEN` and `FLEET_TELEGRAM_CHAT_ID`. The router picks a task's seat and passes it to the run.
+Secrets live in environments that only `main` may use: `fleet-seat-a`, `fleet-seat-b` and `fleet-seat-c` each hold `FLEET_SEAT_TOKEN` and `FLEET_AGENTS_CONFIG_KEY`, and `fleet-alert` holds `FLEET_TELEGRAM_BOT_TOKEN` and `FLEET_TELEGRAM_CHAT_ID`. The router picks a task's seat and passes it to the run: the seats take turns, and a seat that hit a usage limit is skipped for that task until it resets.
 
 ## How it works
 
