@@ -1,7 +1,9 @@
 # Fleet: runs Claude Code agents as Actions jobs, one task issue per job.
-# router:      about every 30 minutes (best effort), on fleet labels and when a task run that counted
-#              as a start ends (next-round). Starts unfinished tasks (.github/fleet/router.sh),
-#              and opens the final PR of a finished fleet/<topic> branch. Also "stop all".
+# router:      on fleet labels, when a task run that counted as a start ends (next-round), when a
+#              PR merges into a fleet/<topic> branch (merged-round) and about every 30 minutes
+#              (best effort, never seen to fire here). Starts unfinished tasks
+#              (.github/fleet/router.sh), closes the issues of merged task PRs and opens the final
+#              PR of a finished fleet/<topic> branch. Also "stop all".
 # router-alert: tells Telegram which tasks the router marked fleet:failed and which final PRs are
 #              ready for review.
 # bad-seat:    fails a task run dispatched without seat a, b or c.
@@ -12,11 +14,14 @@
 # next-round:  after a task run that counted as a start (progress, failed or done) posts its marker,
 #              starts a router round right away with the run's own id, so a restart doesn't wait
 #              for the cron. The cron stays the safety net.
+# merged-round: when a PR from this repo merges into a fleet/<topic> branch, starts a router round
+#              on main, so the task issue closes and the final PR opens without waiting for the
+#              cron. It runs the fleet branch's copy of this file and does nothing but the dispatch.
 # How it can go wrong and what stops it: .github/fleet/FAILURES.md.
 name: fleet
 
 # The router finds a task's runs by this exact name, so keep "task #<n>".
-run-name: "${{ inputs.stop_all && 'fleet stop all' || (inputs.issue && format('task #{0}', inputs.issue) || 'fleet router') }}"
+run-name: "${{ inputs.stop_all && 'fleet stop all' || (inputs.issue && format('task #{0}', inputs.issue) || (github.event_name == 'pull_request' && format('fleet PR #{0} closed', github.event.pull_request.number) || 'fleet router')) }}"
 
 on:
   issues:
@@ -25,6 +30,14 @@ on:
   # of every hour is a busy time, so this asks for minutes 7 and 37, not 0 and 30. Not a guarantee.
   schedule:
     - cron: "7,37 * * * *"
+  # A task PR merges through the queue after its task run has ended, so only this starts the round
+  # that closes its issue. pull_request, not pull_request_target: GitHub blocks pull_request_target
+  # by default in public repos from 2 December 2026. The run uses the workflow file as the fleet
+  # branch has it after the merge, so a branch cut from main before this trigger existed never
+  # fires it (FAILURES.md 37). Only the merged-round job runs on it.
+  pull_request:
+    types: [closed]
+    branches: ["fleet/**"]
   workflow_dispatch:
     inputs:
       issue:
@@ -53,7 +66,7 @@ permissions: {}
 jobs:
   router:
     if: >-
-      (inputs.stop_all || !inputs.issue) &&
+      (inputs.stop_all || !inputs.issue) && github.event_name != 'pull_request' &&
       (github.event_name != 'issues' || github.event.label.name == 'fleet' || github.event.label.name == 'fleet:stop')
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -550,3 +563,39 @@ jobs:
             curl -fsS --retry 3 -o /dev/null -K - \
               --data-urlencode "chat_id=$TELEGRAM_CHAT_ID" --data-urlencode "text=$text"
           echo "sent"
+
+  # A merged PR into a fleet branch starts a round on main, as next-round does. This file is the
+  # fleet branch's copy here, which can be older than main's, so the job runs nothing from the
+  # branch: no checkout, only a dispatch whose ref is main, so the round always runs main's router.
+  # A PR closed without merging, or from a fork (its GITHUB_TOKEN is read-only), starts nothing.
+  # The router never merges a PR into a fleet branch, and a closed event made with GITHUB_TOKEN
+  # starts no run, so a round can't trigger this job. One running and one pending at a time: a
+  # burst of merges collapses to a few dispatches, and the rounds share fleet-router-round.
+  merged-round:
+    if: >-
+      github.event_name == 'pull_request' && github.event.pull_request.merged &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: fleet-merged-round
+      cancel-in-progress: false
+    permissions:
+      actions: write
+    steps:
+      - name: Start a router round on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # return_run_details as a JSON boolean (-F), or the endpoint answers 204 with no body.
+          id=$(gh api -X POST "repos/$REPO/actions/workflows/fleet.yml/dispatches" \
+            -f ref=main -F return_run_details=true \
+            --jq '.workflow_run_id // empty')
+          # A 204, or a 200 without the id, prints nothing and exits 0. Loud, as in next-round.
+          if [[ ! $id =~ ^[0-9]+$ ]]; then
+            echo "::error::the dispatch was accepted but returned no run id, so the round it started can't be found"
+            exit 1
+          fi
+          echo "started router run $id"

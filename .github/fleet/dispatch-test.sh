@@ -36,6 +36,11 @@
 #   can't be read) fails that branch's check red, and no final PR opens. It never reads as "a PR is
 #   already open", "no closed PR has this head" or "no task names it".
 # - task.sh pr-state whose PR read fails fails the step and writes no pr_state.
+# - The round that closes the last task of a branch opens its final PR, though GitHub's issue list
+#   still shows that issue open (the stub answers every read of the open issues the same, as the
+#   list did live). A close that fails leaves the issue open, and no final PR opens.
+# - fleet.yml's merged-round job, cut out of the file: a plain round dispatched on main, red
+#   without a run id, and its YAML limits (see that case).
 # Seats: no markers, so the seat is "abc"[issue number mod 3].
 set -euo pipefail
 
@@ -63,7 +68,9 @@ budget_json() {
 }
 unexpected() { echo "stub gh: unexpected call: $*" >&2; exit 97; }
 case "$1 ${2:-}" in
-  "issue edit") exit 0 ;;
+  "issue edit" | "issue comment") exit 0 ;;
+  # close-fail: closing an issue fails.
+  "issue close") if [[ -f $d/close-fail ]]; then echo "stub: HTTP 502" >&2; exit 1; fi; exit 0 ;;
   "pr create") echo "https://github.com/$R/pull/300"; exit 0 ;;
   "api "*) shift ;;
   *) unexpected "$@" ;;
@@ -93,7 +100,14 @@ case "$*" in
       | length as $n
       | [range(0; ([$n, 1] | max); $p) as $i | {total_count: $n, workflow_runs: .[$i:$i + $p]}]'
     ;;
-  "--paginate --slurp repos/$R/issues?state=open&labels=fleet&per_page=100") printf '[%s]\n' "$(cat "$d/issues.json")" ;;
+  "--paginate --slurp repos/$R/issues?state=open&labels=fleet&per_page=100")
+    # issues.json: the answer to every read, unless issues-after.json is there: then that is the
+    # answer from the second read on (the read again for the final PR).
+    echo $(($(or_default "$d/open-count" 0) + 1)) >"$d/open-count"
+    f=$d/issues.json
+    if [[ -f $d/issues-after.json ]] && (($(cat "$d/open-count") >= 2)); then f=$d/issues-after.json; fi
+    printf '[%s]\n' "$(cat "$f")"
+    ;;
   "--paginate --slurp repos/$R/issues?state=closed&labels=fleet&per_page=100") printf '[%s]\n' "$(or_default "$d/closed.json" '[]')" ;;
   "--paginate --slurp repos/$R/git/matching-refs/heads/fleet/?per_page=100") printf '[%s]\n' "$(or_default "$d/branches.json" '[]')" ;;
   "--paginate --slurp repos/$R/pulls?state=open&base=main&head="*)
@@ -108,32 +122,44 @@ case "$*" in
     ;;
   "--paginate --slurp repos/$R/pulls?"*) echo '[[]]' ;;
   "graphql "*)
-    # The task PR lookup. graphql-fail: it fails. pulls.json: the PR nodes, else none.
+    # The task PR lookup. graphql-fail: it fails. pulls-<issue>.json, else pulls.json: the PR
+    # nodes, else none.
     if [[ -f $d/graphql-fail ]]; then echo "stub: HTTP 502" >&2; exit 1; fi
-    printf '{"data": {"repository": {"pullRequests": {"nodes": %s}}}}\n' "$(or_default "$d/pulls.json" '[]')"
+    p=$d/pulls.json
+    for a in "$@"; do
+      if [[ $a == head=task/* && -f $d/pulls-${a#head=task/}.json ]]; then p=$d/pulls-${a#head=task/}.json; fi
+    done
+    printf '{"data": {"repository": {"pullRequests": {"nodes": %s}}}}\n' "$(or_default "$p" '[]')"
     ;;
   "--paginate --slurp repos/$R/issues/"*"/dependencies/blocked_by?per_page=100") echo '[[]]' ;;
   "--paginate --slurp repos/$R/issues/"*"/comments?per_page=100")
     n=${3#repos/"$R"/issues/}
     printf '[%s]\n' "$(or_default "$d/comments-${n%%/*}.json" '[]')"
     ;;
-  "-X PUT repos/$R/issues/"*"/lock --silent") ;;
+  "-X PUT repos/$R/issues/"*"/lock --silent" | "-X DELETE repos/$R/issues/"*"/lock --silent") ;;
   "-X POST repos/$R/actions/runs/"*"/cancel --silent")
     # cancel-fail: every cancel fails.
     if [[ -f $d/cancel-fail ]]; then echo "stub: HTTP 500" >&2; exit 1; fi
     ;;
   "-X POST repos/$R/actions/workflows/ci.yml/dispatches -f ref="*" --silent") ;;
   "-X POST repos/$R/actions/workflows/fleet.yml/dispatches "*)
-    n="" details=false prev=""
+    # dispatch-<issue>: the answer, or FAIL. dispatch- (no issue) is a plain round's. --jq is
+    # applied as gh does, and like gh it prints nothing for an empty body.
+    n="" details=false prev="" filter=""
     for a in "$@"; do
       if [[ $a == "inputs[issue]="* ]]; then n=${a#"inputs[issue]="}; fi
       if [[ $prev == -F && $a == return_run_details=true ]]; then details=true; fi
+      if [[ $prev == --jq ]]; then filter=$a; fi
       prev=$a
     done
     answer=$(cat "$d/dispatch-$n")
     if [[ $answer == FAIL ]]; then echo "stub: HTTP 422" >&2; exit 1; fi
     # 204 No Content unless the run's details were asked for.
-    if [[ $details == true ]]; then printf '%s' "$answer"; fi
+    if [[ $details == true && -n $filter && -n $answer ]]; then
+      jq -r "$filter" <<<"$answer"
+    elif [[ $details == true ]]; then
+      printf '%s' "$answer"
+    fi
     ;;
   "repos/$R/actions/runs/"*" --jq .status")
     id=${1#repos/"$R"/actions/runs/}
@@ -659,6 +685,81 @@ if grep -q "^pr_state=" "$STUB/output" 2>/dev/null; then fail "wrote a pr_state"
 want_exit 1
 done_case
 
+# The last task of fleet/x, #260, has its PR merged. The round closes it, and the open issues read
+# again for the final PR still list it, as GitHub's list did live (run 44256227996). The final PR
+# opens, and ci starts on fleet/x, green.
+last_task() {
+  final_ready
+  echo '[]' >"$STUB/closed.json"
+  issue 260 | jq -s 'map(.body = "brief\nBase: fleet/x")' >"$STUB/issues.json"
+  echo '[{"number": 70, "state": "MERGED", "isDraft": false, "isInMergeQueue": false, "isCrossRepository": false,
+    "baseRefName": "fleet/x", "locked": true, "mergeable": "UNKNOWN", "autoMergeRequest": null,
+    "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "SUCCESS"}}}]}}]' >"$STUB/pulls.json"
+}
+scenario last-task-lag
+last_task
+route
+want_out "#260 done pr=merged: PR #70 merged"
+want_call "issue close 260 -R fixture/repo"
+want_out "fleet/x final PR: ready"
+want_call "api -X POST repos/fixture/repo/actions/workflows/ci.yml/dispatches -f ref=fleet/x --silent"
+want_output "final_prs=https://github.com/fixture/repo/pull/300"
+want_exit 0
+done_case
+
+# The same, but the close fails: #260 is still open, so no final PR, and the round is red.
+scenario last-task-close-fails
+last_task
+touch "$STUB/close-fail"
+route
+want_out "fleet/x final PR: not ready, an open task names it"
+want_no_call "pr create"
+want_out "fleet: 1 changes failed"
+want_exit 1
+done_case
+
+# Two branches. The round closes #260, the last task of fleet/x, while #261, a task of fleet/y, has
+# a run in progress (fleet/y also has a closed task, #201). Only the issue the round closed counts
+# as closed: fleet/x's final PR opens, fleet/y's doesn't.
+scenario final-other-branch-running
+last_task
+echo '[{"ref": "refs/heads/fleet/x", "object": {"sha": "1111111111111111111111111111111111111111"}},
+  {"ref": "refs/heads/fleet/y", "object": {"sha": "2222222222222222222222222222222222222222"}}]' >"$STUB/branches.json"
+echo '[{"number": 201, "state": "closed", "body": "Base: fleet/y", "labels": [{"name": "fleet"}]}]' >"$STUB/closed.json"
+{
+  issue 260
+  issue 261
+} | jq -s 'map(.body = "brief\nBase: fleet/" + (if .number == 260 then "x" else "y" end))' >"$STUB/issues.json"
+echo '[]' >"$STUB/pulls-261.json"
+echo "5261|task #261|in_progress|1" >"$STUB/runs"
+route
+want_out "#260 done pr=merged: PR #70 merged"
+want_out "#261 skip-running pr=none: a task #261 run is queued or running"
+want_call "issue close 260 -R fixture/repo"
+want_out "fleet/x final PR: ready"
+want_out "fleet/y final PR: not ready, an open task names it"
+want_call "api -X POST repos/fixture/repo/actions/workflows/ci.yml/dispatches -f ref=fleet/x --silent"
+want_no_call "--head fleet/y"
+want_no_call "ref=fleet/y"
+want_output "final_prs=https://github.com/fixture/repo/pull/300"
+want_exit 0
+done_case
+
+# No lag: the round closes #260, and the lists read again already have it closed and not open. It
+# counts once, as a closed task naming fleet/x, and the final PR opens, once.
+scenario last-task-no-lag
+last_task
+printf '%s\n' '[{"number": 260, "state": "closed", "body": "brief\nBase: fleet/x", "labels": [{"name": "fleet"}]}]' >"$STUB/closed.json"
+echo '[]' >"$STUB/issues-after.json"
+route
+want_out "#260 done pr=merged: PR #70 merged"
+want_call "issue close 260 -R fixture/repo"
+want_out "fleet/x final PR: ready"
+[[ $(grep -c '^pr create' "$STUB/calls.log") == 1 ]] || fail "want exactly one pr create"
+want_output "final_prs=https://github.com/fixture/repo/pull/300"
+want_exit 0
+done_case
+
 # Live run objects are about 13 KB each. big_runs: 12 in_progress runs 9100 to 9111 of tasks #330
 # to #341, padded to 13,000 bytes each, about 157 KB together, over the 128 KB a Linux argument
 # may hold. #331's run is 9101.
@@ -696,6 +797,93 @@ want_out "task runs active: 12, cap 16"
 want_out "#331 skip-running pr=none: a task #331 run is queued or running"
 want_no_call "fleet.yml/dispatches"
 want_exit 0
+done_case
+
+# The merged-round job in fleet.yml: a PR merged into a fleet branch starts a round on main. Its
+# shell is cut out of fleet.yml and run against the stub gh, and its YAML is checked for what can't
+# run here. Rules: the dispatch is fleet.yml with ref main and return_run_details as a JSON boolean,
+# and no inputs (a plain round, not a task run and not after_run); a 204, or an answer without a
+# numeric id, is an error and red. The job checks out nothing and uses no action (the file is the
+# fleet branch's copy), has actions: write only, runs only for a merged PR from this repo (its if
+# exactly, no ||), and the trigger is pull_request closed on fleet/**. It has no environment and no
+# secret, its env is exactly the token and github.repository, and its concurrency is the one group
+# fleet-merged-round with cancel-in-progress false. The router job never runs on that event, the
+# task jobs (bad-seat, task, outcome, next-round) only on workflow_dispatch, and the run name for
+# it carries the PR number and nothing else from the PR.
+wf="$here/../workflows/fleet.yml"
+job=$(awk '/^  merged-round:$/ { on = 1; print; next } on && /^  [a-z]/ { exit } on' "$wf")
+script=$(awk '/^        run: \|$/ { on = 1; next } on && /^          / { print substr($0, 11); next }
+  on && /^ *$/ { print ""; next } on { exit }' <<<"$job")
+# job_if <job>: that job's if in fleet.yml, its lines joined with one space.
+job_if() {
+  awk -v j="  $1:" '$0 == j { on = 1; next } on && /^  [a-z]/ { exit }
+    on && /^    if:/ { sub(/^    if: *(>-)? */, ""); s = $0; c = 1; next }
+    c && /^      / { sub(/^ +/, ""); s = (s == "" ? $0 : s " " $0); next } c { exit }
+    END { print s }' "$wf"
+}
+# merged_round: run the job's shell as its step does, with the stub gh first on PATH.
+merged_round() {
+  code=0
+  out=$(env PATH="$tmp/bin:$PATH" GH_TOKEN=stub REPO=fixture/repo bash -c "$script" 2>&1) || code=$?
+}
+
+scenario merged-round
+ok 6001 >"$STUB/dispatch-"
+merged_round
+want_call "api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true --jq .workflow_run_id // empty"
+want_no_call "inputs["
+want_out "started router run 6001"
+want_exit 0
+done_case
+
+scenario merged-round-no-id
+: >"$STUB/dispatch-"
+merged_round
+want_out "::error::the dispatch was accepted but returned no run id, so the round it started can't be found"
+want_exit 1
+done_case
+
+scenario merged-round-yaml
+[[ -n $script ]] || fail "no run script in the merged-round job"
+perms=$(awk '/^    permissions:/ { on = 1; next } on && /^      / { print; next } on { exit }' <<<"$job")
+[[ $perms == "      actions: write" ]] || fail "merged-round permissions are '$perms', want actions: write only"
+if grep -qE '^ +(- )?uses:' <<<"$job"; then fail "merged-round uses an action"; fi
+grep -qF "github.event_name == 'pull_request' && github.event.pull_request.merged &&" <<<"$job" ||
+  fail "merged-round doesn't require a merged PR"
+grep -qF "github.event.pull_request.head.repo.full_name == github.repository" <<<"$job" ||
+  fail "merged-round doesn't require a PR from this repo"
+trigger=$(awk '/^  pull_request:$/ { on = 1; next } on && /^    / { print; next } on && !/^ *#/ { exit }' "$wf")
+[[ $trigger == $'    types: [closed]\n    branches: ["fleet/**"]' ]] ||
+  fail "the pull_request trigger is '$trigger', want types [closed] and branches fleet/**"
+router_if=$(awk '/^  router:$/ { on = 1; next } on && /^    if:/ { getline; print; exit }' "$wf")
+grep -qF "github.event_name != 'pull_request'" <<<"$router_if" || fail "the router job can run on a pull_request event"
+# The job's if, exactly: all three conditions, nothing that can widen it (no ||).
+want_if="github.event_name == 'pull_request' && github.event.pull_request.merged && github.event.pull_request.head.repo.full_name == github.repository"
+[[ $(job_if merged-round) == "$want_if" ]] || fail "merged-round's if is '$(job_if merged-round)', want '$want_if'"
+if grep -qF '||' <<<"$(job_if merged-round)"; then fail "merged-round's if has ||"; fi
+# One running and one pending, for the whole repo: one group, never cancelled in progress.
+conc=$(awk '/^    concurrency:$/ { on = 1; print; next } on && /^      / { print; next } on { exit }' <<<"$job")
+[[ $conc == $'    concurrency:\n      group: fleet-merged-round\n      cancel-in-progress: false' ]] ||
+  fail "merged-round's concurrency is '$conc', want group fleet-merged-round, cancel-in-progress false"
+if grep -qF 'cancel-in-progress: true' <<<"$job"; then fail "merged-round cancels in-progress runs"; fi
+# No environment and no secret: the file is the fleet branch's copy.
+if grep -qE '^ +environment:' <<<"$job"; then fail "merged-round has an environment"; fi
+if grep -qF 'secrets' <<<"$job"; then fail "merged-round reads a secret"; fi
+# One env block, exactly the token and this repository (never a name from the PR's head).
+[[ $(grep -cE '^ +env:' <<<"$job") == 1 ]] || fail "merged-round has more than one env block"
+envb=$(awk '/^        env:$/ { on = 1; next } on && /^          / { print; next } on { exit }' <<<"$job")
+[[ $envb == $'          GH_TOKEN: ${{ github.token }}\n          REPO: ${{ github.repository }}' ]] ||
+  fail "merged-round's env is '$envb', want GH_TOKEN from github.token and REPO from github.repository only"
+# The task jobs run only on a dispatch, never on this event.
+for j in bad-seat task outcome next-round; do
+  grep -qF "github.event_name == 'workflow_dispatch' &&" <<<"$(job_if "$j")" ||
+    fail "$j's if doesn't require github.event_name == 'workflow_dispatch'"
+  if grep -qF '||' <<<"$(job_if "$j")"; then fail "$j's if has ||"; fi
+done
+# The run name for this event carries the PR number and nothing else from the PR: the router finds
+# task runs by their exact name, and a title is text anyone opening a PR can choose.
+want_rn="run-name: \"\${{ inputs.stop_all && 'fleet stop all' || (inputs.issue && format('task #{0}', inputs.issue) || (github.event_name == 'pull_request' && format('fleet PR #{0} closed', github.event.pull_request.number) || 'fleet router')) }}\""
+[[ $(grep '^run-name:' "$wf") == "$want_rn" ]] || fail "the run-name is '$(grep '^run-name:' "$wf")', want '$want_rn'"
 done_case
 
 echo "dispatch-test: all cases match"

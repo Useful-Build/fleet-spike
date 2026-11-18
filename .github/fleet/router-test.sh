@@ -52,9 +52,11 @@
 # after-run/ leaves 731 REST and exactly 200 GraphQL, so its rounds run. graphql-low/ has only
 # rate_limit.json: 900 REST, 199 GraphQL, so the round holds back before it reads anything else.
 # final.json: fleet/done ready, fleet/demo has open tasks, fleet/has-pr has a PR into main,
-# fleet/empty isn't ahead of main, fleet/closing is ready once #140 closes this round (the open
-# list is read again), fleet/orphan is ahead with no task naming it, fleet/reviewed has a closed
-# PR into main at its current head, fleet/reworked has one at an older head.
+# fleet/empty isn't ahead of main, fleet/closing is ready once #140 closes this round, though the
+# lists read again still have #140 open and not closed (GitHub's lag), fleet/orphan is ahead with
+# no task naming it, fleet/reviewed has a closed PR into main at its current head, fleet/reworked
+# has one at an older head. A close that fails doesn't count as closed: dispatch-test.sh tests that
+# (last-task-close-fails), as FLEET_ACT_FAIL here already fails #141's lock in the same round.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
