@@ -42,13 +42,39 @@ fleet_init() {
   NOW=${FLEET_NOW:-$(date -u +%s)}
 }
 
-# Runs a command that changes GitHub, or only prints it in a dry run.
+# Runs a command that changes GitHub, or only prints it in a dry run. In a dry run, a command that
+# matches the glob in FLEET_ACT_FAIL fails, so the tests can follow a failed change.
 act() {
   if [[ ${DRY_RUN:-0} == 1 ]]; then
     echo "  would run: $*"
+    # shellcheck disable=SC2053 # the right side is a glob on purpose
+    if [[ -n ${FLEET_ACT_FAIL:-} && "$*" == $FLEET_ACT_FAIL ]]; then
+      echo "  (fails)"
+      return 1
+    fi
   else
     "$@"
   fi
+}
+
+# Posts a comment on issue or PR $1 with body $2. $3 is "true" when its conversation is locked.
+# GitHub may refuse a bot's comment on a locked conversation, so a locked one is unlocked for the
+# post and locked again right after, even when the post fails. Locking again is never fatal.
+# Fails when the post fails.
+comment_on() {
+  local n=$1 body=$2 locked=$3 unlocked=false rc=0
+  if [[ $locked == true ]]; then
+    if act gh api -X DELETE "repos/$FLEET_REPO/issues/$n/lock" --silent; then
+      unlocked=true
+    else
+      warn "unlocking #$n failed, posting anyway"
+    fi
+  fi
+  act gh issue comment "$n" -R "$FLEET_REPO" --body "$body" || rc=$?
+  if [[ $unlocked == true ]]; then
+    act gh api -X PUT "repos/$FLEET_REPO/issues/$n/lock" --silent || warn "locking #$n again failed"
+  fi
+  return $rc
 }
 
 # Writes a step output in Actions, and always echoes it.
@@ -122,7 +148,7 @@ api_blocked_by() {
 }
 
 # PRs from task/<n> in this repo into the task's base branch, newest first, as
-# [{number, state, isDraft, inQueue, autoMerge, checks, locked}]. A fork PR from a branch that is
+# [{number, state, isDraft, inQueue, autoMerge, checks, mergeable, locked}]. A fork PR from a branch that is
 # also named task/<n>, or a PR into another base, is never the task's PR. GraphQL, because REST has
 # no merge queue state. $2 is the base branch; without one no PR can be the task's.
 api_pulls() {
@@ -141,7 +167,7 @@ api_pulls() {
         repository(owner: $owner, name: $name) {
           pullRequests(headRefName: $head, baseRefName: $base, first: 100, orderBy: {field: CREATED_AT, direction: DESC}) {
             nodes {
-              number state isDraft isInMergeQueue isCrossRepository baseRefName locked
+              number state isDraft isInMergeQueue isCrossRepository baseRefName locked mergeable
               autoMergeRequest { enabledAt }
               commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
             }
@@ -151,7 +177,7 @@ api_pulls() {
   fi | jq --arg base "$base" '.data.repository.pullRequests.nodes
     | map(select(.isCrossRepository == false and .baseRefName == $base))
     | map({
-        number, state, isDraft, locked,
+        number, state, isDraft, locked, mergeable,
         inQueue: .isInMergeQueue,
         autoMerge: (.autoMergeRequest != null),
         checks: .commits.nodes[0].commit.statusCheckRollup.state
@@ -173,12 +199,23 @@ api_active_runs() {
   echo "$all"
 }
 
-# Branches named fleet/<topic>, as a JSON array of names.
+# Open issues labelled fleet at the end of a round, after the round's own closes. Live, a fresh
+# api_issues. The fixture is final.json's open_issues, the list as GitHub returns it then.
+api_issues_after_round() {
+  if [[ -n ${FLEET_FIXTURES:-} ]]; then
+    fixture_final open_issues | jq 'map(select(.pull_request == null))'
+  else
+    api_issues
+  fi
+}
+
+# Branches named fleet/<topic>, as [{name, sha}] with each branch's head commit.
 api_fleet_branches() {
   if [[ -n ${FLEET_FIXTURES:-} ]]; then
     fixture_final branches
   else
-    api_list "repos/$FLEET_REPO/git/matching-refs/heads/fleet/?per_page=100" | jq 'map(.ref | sub("^refs/heads/"; ""))'
+    api_list "repos/$FLEET_REPO/git/matching-refs/heads/fleet/?per_page=100" |
+      jq 'map({name: (.ref | sub("^refs/heads/"; "")), sha: .object.sha})'
   fi
 }
 
@@ -198,6 +235,15 @@ api_prs_to_main() {
   else
     api_list "repos/$FLEET_REPO/pulls?state=open&base=main&head=${FLEET_REPO%%/*}:$1&per_page=100"
   fi
+}
+
+# Head commits of the closed, unmerged PRs from a branch of this repo into main, as an array.
+api_closed_heads_to_main() {
+  if [[ -n ${FLEET_FIXTURES:-} ]]; then
+    fixture_final closed_prs_to_main | jq --arg b "$1" '.[$b] // []'
+  else
+    api_list "repos/$FLEET_REPO/pulls?state=closed&base=main&head=${FLEET_REPO%%/*}:$1&per_page=100"
+  fi | jq 'map(select(.merged_at == null) | .head.sha)'
 }
 
 # Numbers of the merged PRs from this repo into a branch, oldest first.
@@ -242,12 +288,6 @@ markers() {
     | sort_by(.at)'
 }
 
-# A start is a run that got as far as the agent: outcome progress, failed or done.
-# paused and cancelled aren't starts. Prints the count. Reads markers JSON on stdin.
-start_count() {
-  jq '[.[] | select(.outcome == "progress" or .outcome == "failed" or .outcome == "done")] | length'
-}
-
 # Prints why a task may not start again, or nothing. Reads markers JSON on stdin.
 cap_reason() {
   jq -r --argjson max "$FLEET_MAX_STARTS" '
@@ -259,28 +299,31 @@ cap_reason() {
       else empty end'
 }
 
-# Prints the retry time if the newest marker is a pause that hasn't run out, or nothing.
-# A date that can't be read (2026-13-45T99:99:99Z) is no pause, never an error.
-paused_until() {
-  jq -r --argjson now "$NOW" '
-    last // empty
-    | select(.outcome == "paused" and .retry_after != "")
-    | select(((try (.retry_after | fromdateiso8601) catch null) // 0) > $now)
-    | .retry_after'
-}
-
-# The seat for the next start: (issue number + earlier starts) mod 3, as a, b or c.
+# The seat for the next start. Rotation order starts at (issue number mod 3) and moves on by one
+# for every earlier marker that isn't cancelled, so a pause moves it on too. A paused marker blocks
+# its own seat for this task until its retry_after, or until an hour after the marker when
+# retry_after is empty or can't be read. Takes the first seat in rotation order that isn't
+# blocked, and prints it (a, b or c), or "until <time>" with the earliest time a seat frees when
+# all three are blocked. A seat frees at its retry_after exactly.
 #   $1 issue number. Reads markers JSON on stdin.
-seat_for() {
-  local count seats=(a b c)
-  count=$(start_count)
-  echo "${seats[$((($1 + count) % 3))]}"
+seat_choice() {
+  jq -r --argjson n "$1" --argjson now "$NOW" '
+    def time: try fromdateiso8601 catch null;
+    (map(select(.outcome != "cancelled")) | length) as $k
+    | [ .[] | select(.outcome == "paused")
+        | {seat, until: ((.retry_after | if . == "" then null else time end) // (((.at | time) // 0) + 3600))} ]
+      as $pauses
+    | [ range(0; 3) | ["a", "b", "c"][($n + $k + .) % 3] as $s
+        | {seat: $s, until: ([$pauses[] | select(.seat == $s) | .until] | max // 0)} ] as $order
+    | ([$order[] | select(.until <= $now)][0].seat)
+      // ("until " + ([$order[].until] | min | todate))'
 }
 
 # The state of a task's PR, from api_pulls JSON on stdin. One of:
 #   merged     a PR merged
 #   draft      the newest open PR is a draft
 #   queued     ready, in the merge queue
+#   conflicting ready, not queued, conflicts with its base (whatever auto-merge and checks say)
 #   failing    ready, its checks failed or errored (whatever auto-merge says)
 #   automerge  ready, auto-merge on, checks pending or passing
 #   ready      ready, auto-merge off and not queued (dropped from the queue, or never queued)
@@ -293,6 +336,7 @@ pr_state() {
       | if $p == null then "none"
         elif $p.isDraft then "draft"
         elif $p.inQueue then "queued"
+        elif $p.mergeable == "CONFLICTING" then "conflicting"
         elif ($p.checks == "FAILURE" or $p.checks == "ERROR") then "failing"
         elif $p.autoMerge then "automerge"
         else "ready" end
@@ -303,15 +347,15 @@ has_label() {
   jq -e --arg l "$2" 'any(.labels[]?; .name == $l)' <<<"$1" >/dev/null
 }
 
-# shellcheck disable=SC2034 # DECISION, REASON and SEAT are read by the caller
-# Decides what to do with one task issue, from real state only. Sets DECISION, REASON and, for a
-# start, SEAT.
+# shellcheck disable=SC2034 # DECISION, REASON, SEAT and PR_STATE are read by the caller
+# Decides what to do with one task issue, from real state only. Sets DECISION, REASON, PR_STATE
+# (the pr_state word, or "-" when the decision came before reading the PR) and, for a start, SEAT.
 #   $1 issue number, $2 issue JSON, $3 active runs JSON, or "self" when called from the task's own run
 # Decisions: start, done, failed-cap, skip-running, skip-waiting, skip-blocked, skip-paused,
 # skip-stopped, skip-failed, skip-author, skip-closed, skip-unlabelled.
 decide() {
-  local n=$1 issue=$2 active=$3 base pulls state open_no blockers mk cap until
-  DECISION="" REASON="" SEAT=""
+  local n=$1 issue=$2 active=$3 base pulls state open_no blockers mk cap seat
+  DECISION="" REASON="" SEAT="" PR_STATE="-"
 
   if [[ $(jq -r .state <<<"$issue") != open ]]; then
     DECISION=skip-closed REASON="issue is closed"
@@ -329,6 +373,7 @@ decide() {
   base=$(issue_base <<<"$issue")
   pulls=$(api_pulls "$n" "$base")
   state=$(pr_state <<<"$pulls")
+  PR_STATE=$state
   open_no=$(jq -r '[.[] | select(.state == "OPEN")][0].number // empty' <<<"$pulls")
   # Merged wins over every label: the work is in, so the issue closes.
   if [[ $state == merged ]]; then
@@ -371,17 +416,18 @@ decide() {
     DECISION=failed-cap REASON="$cap"
     return
   fi
-  until=$(paused_until <<<"$mk")
-  if [[ -n $until ]]; then
-    DECISION=skip-paused REASON="paused on a usage limit until $until"
+  seat=$(seat_choice "$n" <<<"$mk")
+  if [[ $seat == until* ]]; then
+    DECISION=skip-paused REASON="every seat is paused on a usage limit, the first frees at ${seat#until }"
     return
   fi
 
   DECISION=start
-  SEAT=$(seat_for "$n" <<<"$mk")
+  SEAT=$seat
   case $state in
     none) REASON="unfinished, no open PR" ;;
     draft) REASON="unfinished, draft PR #$open_no" ;;
+    conflicting) REASON="unfinished, ready PR #$open_no conflicts with its base" ;;
     failing) REASON="unfinished, ready PR #$open_no has failed checks" ;;
     ready) REASON="unfinished, ready PR #$open_no has auto-merge off and isn't queued" ;;
   esac
@@ -394,14 +440,17 @@ decide() {
 #   $4 whether it claims a usage limit stopped it: "true" or anything else
 #   $5 whether it ran to the agent's step timeout: "true" or anything else
 #   $6 the PR state from pr_state
-# Only $1 and $6 are facts GitHub reports. $2 to $5 are what the task job says, and the agent can
-# change what that job says (see FAILURES.md).
+#   $7 whether the issue has fleet:stop: "true" or anything else
+# Only $1, $6 and $7 are facts GitHub reports. $2 to $5 are what the task job says, and the agent
+# can change what that job says (see FAILURES.md).
+# A cancelled job is "cancelled" (not a start) only when the task is stopped. Any other cancel, a
+# manual one or GitHub's own job timeout, is "progress", so it counts toward the start cap.
 classify() {
-  local result=$1 checkout=$2 agent=$3 paused=$4 timed_out=$5 state=$6
+  local result=$1 checkout=$2 agent=$3 paused=$4 timed_out=$5 state=$6 stopped=$7
   if [[ $result == skipped ]]; then
     echo none
   elif [[ $result == cancelled ]]; then
-    echo cancelled
+    if [[ $stopped == true ]]; then echo cancelled; else echo progress; fi
   elif [[ $checkout != true ]]; then
     # Never got to the agent. A clean refusal (stopped, capped, done) isn't a start. A job that
     # died here (an API error, no Base line, a lost runner with no outputs) is a failed start.
@@ -428,11 +477,11 @@ clamp_retry_after() {
   [[ -z $raw ]] && return 0
   if [[ ! $raw =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] ||
     ! t=$(jq -rn --arg r "$raw" '$r | fromdateiso8601' 2>/dev/null); then
-    warn "retry_after '$raw' isn't a time, recorded as empty"
+    warn "retry_after isn't a time, recorded as empty"
     return 0
   fi
   if ((t > NOW + MAX_PAUSE_SECONDS)); then
-    warn "retry_after $raw is more than 8 days ahead, capped at 8 days"
+    warn "retry_after is more than 8 days ahead, capped at 8 days"
     RETRY_AFTER=$(jq -rn --argjson t $((NOW + MAX_PAUSE_SECONDS)) '$t | todate')
   else
     RETRY_AFTER=$raw

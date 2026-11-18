@@ -10,24 +10,37 @@
 # that blesses whatever the code prints can't catch a wrong decision. When a rule changes, edit
 # expected.txt by hand from the rule first, then change the code until this passes.
 #
-# Decision lines are compared without their free-text reason ("#104 start", not
-# "#104 start: unfinished, ..."): the decision and the commands are what's under test.
-# The clock is fixed at 2026-11-17T12:00:00Z. One issue per case in fixtures/issues.json:
-#   101 running            102 merged               103 in the merge queue
+# Decision lines are compared without their free-text reason ("#104 start pr=failing", not
+# "#104 start pr=failing: unfinished, ..."): the decision, the PR state word and the commands are
+# what's under test. The PR state is kept so two states that both lead to "start" can't hide a
+# wrong rule. The clock is fixed at 2026-11-17T12:00:00Z, and the job cap at 23 with 2 task runs
+# active, so the 21 starts before #130 fill it exactly. One issue per case in fixtures/issues.json:
+#   101 running            102 merged               103 in the merge queue, no auto-merge object
 #   104 auto-merge on, checks failed                105 stopped, with a queued run
 #   106 fleet:failed       107 auto-merge on, checks passing
 #   108 ready, checks pending, no auto-merge        109 written by someone else
 #   110 blocked            111 ready, auto-merge off, passing, not queued (dropped from the queue)
-#   112 closed-only PR     113 fork PR named task/113, open, not draft; forged markers
+#   112 closed-only PR with a stale auto-merge object
+#   113 fork PR named task/113, auto-merge on, checks passing; forged markers
 #   114 PR into the wrong base                      115 exactly 5 starts, done among them
 #   116 6 starts, done among them                   117 one failed; no Base line
 #   118 failed, progress, failed                    119 failed, paused, failed
 #   120 paused, retry_after past   121 paused, retry_after empty   122 paused, impossible date
-#   123 paused, retry_after future 124 null user    125 owner login in another case, locked
-#   126 draft PR           127 merged but stopped   128 a PR in the issue list
-#   129 its API reads fail 130 no free job slot
+#   123 paused on a, retry_after future             124 null user
+#   125 owner login in another case, locked         126 draft PR
+#   127 merged but stopped         128 a PR in the issue list      129 its API reads fail
+#   131 fork PR named task/131, merged              132 auto-merge on, checks ERROR
+#   133 auto-merge on, checks passing, conflicting  134 paused on a, rotation at a: goes to b
+#   135 all three seats paused     136 b and c paused, a paused 30 minutes ago with no retry_after
+#   137 c and b paused, a paused 2 hours ago with no retry_after
+#   138 b and c paused, a paused until exactly now  139 markers listed out of time order
+#   140 merged, the only task naming fleet/closing  141 its lock fails
+#   142 5 starts, PR with auto-merge on             130 (created last) no free job slot
+#   141 is created first, so its failed lock comes before the slots run out.
 # final.json: fleet/done ready, fleet/demo has open tasks, fleet/has-pr has a PR into main,
-# fleet/empty isn't ahead of main.
+# fleet/empty isn't ahead of main, fleet/closing is ready once #140 closes this round (the open
+# list is read again), fleet/orphan is ahead with no task naming it, fleet/reviewed has a closed
+# PR into main at its current head, fleet/reworked has one at an older head.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -36,8 +49,8 @@ expected="$fx/expected.txt"
 
 [[ $# == 0 ]] || { echo "usage: router-test.sh (no options; edit expected.txt by hand)" >&2; exit 2; }
 
-export FLEET_FIXTURES="$fx" FLEET_NOW=1794916800 FLEET_OWNER=fleet-owner FLEET_MAX_JOBS=16 FLEET_MAX_STARTS=6
-unset GITHUB_OUTPUT FLEET_EVENT_LABEL FLEET_EVENT_ISSUE FLEET_STOP_ALL
+export FLEET_FIXTURES="$fx" FLEET_NOW=1794916800 FLEET_OWNER=fleet-owner FLEET_MAX_JOBS=23 FLEET_MAX_STARTS=6
+unset GITHUB_OUTPUT FLEET_EVENT_LABEL FLEET_EVENT_ISSUE FLEET_STOP_ALL FLEET_ACT_FAIL
 
 run() {
   echo "\$ $*"
@@ -53,15 +66,21 @@ usage() {
   run env EXECUTION_FILE="${1:+$fx/$1}" bash "$here/task.sh" usage 104
 }
 
-# outcome <issue> <task result> <checkout ran> <agent> <paused> <retry_after> <minutes since start>
+# outcome [NAME=value ...] <issue> <task result> <checkout ran> <agent> <paused> <retry_after>
+#   <minutes since start>. Leading NAME=value pairs (SEAT, FLEET_ACT_FAIL) go last into env.
 outcome() {
+  local extra=()
+  while [[ $1 == *=* ]]; do
+    extra+=("$1")
+    shift
+  done
   run env TASK_RESULT="$2" CHECKOUT_RAN="$3" AGENT_OUTCOME="$4" PAUSED="$5" RETRY_AFTER="$6" \
     STARTED="${7:+$((FLEET_NOW - ${7:-0} * 60))}" AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b \
-    bash "$here/task.sh" outcome "$1"
+    ${extra[@]+"${extra[@]}"} bash "$here/task.sh" outcome "$1"
 }
 
 actual=$(
-  run bash "$here/router.sh"
+  run env "FLEET_ACT_FAIL=gh api -X PUT repos/fixture/repo/issues/141/lock*" bash "$here/router.sh"
   run env FLEET_EVENT_LABEL=fleet:stop FLEET_EVENT_ISSUE=101 bash "$here/router.sh"
   run env FLEET_EVENT_LABEL=bug FLEET_EVENT_ISSUE=101 bash "$here/router.sh"
   run env FLEET_STOP_ALL=true bash "$here/router.sh"
@@ -90,10 +109,18 @@ actual=$(
   outcome 120 cancelled true cancelled false "" 30
   outcome 120 success false "" "" "" 1
   outcome 120 success true failure false "" 331
+  outcome 105 cancelled true cancelled false "" 30
+  outcome 125 success true success false "" 60
+  outcome "FLEET_ACT_FAIL=gh issue comment 125 *" 125 success true success false "" 60
+  outcome "FLEET_ACT_FAIL=gh api -X PUT repos/fixture/repo/issues/125/lock*" 125 success true success false "" 60
+  outcome "FLEET_ACT_FAIL=gh api -X PUT repos/fixture/repo/issues/226/lock*" 126 success true success false "" 60
+  outcome 142 success true success false "" 60
+  outcome 104 bogus yes ::error::x ::warning::y "" 20
+  outcome SEAT=A 104 success true success false "" 20
 )
 # Paths in the output depend on where the repo is checked out. Reasons are dropped (see above).
 actual=${actual//$here/.github\/fleet}
-actual=$(sed -E 's/^(#[0-9]+ [a-z-]+): .*/\1/' <<<"$actual")
+actual=$(sed -E 's/^(#[0-9]+ [a-z-]+( pr=[a-z-]+)?): .*/\1/' <<<"$actual")
 
 if diff -u "$expected" <(printf '%s\n' "$actual"); then
   echo "router-test: all decisions match expected.txt"

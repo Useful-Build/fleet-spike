@@ -8,8 +8,8 @@
 #   task.sh usage <n>      did a usage limit stop the agent? outputs paused, retry_after
 #   task.sh pr-state <n>   the task PR's state (lib.sh pr_state), for the checkpoint. outputs pr_state
 # Outcome job (its own runner, scripts from main, never anything from the task job's runner):
-#   task.sh outcome <n>    classify the run, post its marker, lock the PR, apply the caps.
-#                          outputs outcome, failed_for_good, pr_ready
+#   task.sh outcome <n>    classify the run, post its marker, apply the caps, lock the PR.
+#                          outputs outcome, failed_for_good
 #
 # Add --dry-run to print what would change instead. Env as in router.sh, plus BASE for branch and
 # pr-state, EXECUTION_FILE for usage, and for outcome: RUN_ID, SEAT, TASK_RESULT, CHECKOUT_RAN,
@@ -147,9 +147,24 @@ cmd_pr_state() {
   emit pr_state "$(api_pulls "$n" "$base" | pr_state)"
 }
 
+# Prints $1 when it's one of the other arguments, else "invalid". A claim is never printed raw:
+# a task job output can hold a newline and a workflow command (::...::) after it.
+known() {
+  local v=$1 ok
+  shift
+  for ok in "$@"; do
+    if [[ $v == "$ok" ]]; then
+      echo "$v"
+      return
+    fi
+  done
+  echo invalid
+}
+
 cmd_outcome() {
   local run_id=${RUN_ID:?RUN_ID is not set} seat=${SEAT:-} started=${STARTED:-}
-  local issue base pulls state timed_out=false outcome line mk cap failed=false pr_ready=false pr_no
+  local issue base pulls state stopped=false timed_out=false outcome line mk cap failed=false pr_no
+  local result checkout agent paused
   local limit=$((${AGENT_TIMEOUT_MINUTES:-330} * 60))
   [[ $run_id =~ ^[0-9]+$ ]] || die "RUN_ID must be a number"
 
@@ -157,21 +172,26 @@ cmd_outcome() {
   base=$(issue_base <<<"$issue")
   pulls=$(api_pulls "$n" "$base")
   state=$(pr_state <<<"$pulls")
+  if has_label "$issue" fleet:stop; then stopped=true; fi
   # STARTED is the task job's start time, a claim. Anything but a number means no timeout.
   if [[ $started =~ ^[0-9]{1,12}$ ]] && ((NOW - started >= limit)); then timed_out=true; fi
 
-  outcome=$(classify "${TASK_RESULT:-}" "${CHECKOUT_RAN:-}" "${AGENT_OUTCOME:-}" "${PAUSED:-}" "$timed_out" "$state")
-  echo "task job: result=${TASK_RESULT:-} checkout_ran=${CHECKOUT_RAN:-} agent=${AGENT_OUTCOME:-} paused=${PAUSED:-} timed_out=$timed_out pr=$state"
-  if [[ $state == merged || $state == queued || $state == automerge ]]; then pr_ready=true; fi
-  emit outcome "$outcome"
-  emit pr_ready "$pr_ready"
+  result=$(known "${TASK_RESULT:-}" success failure cancelled skipped "")
+  checkout=$(known "${CHECKOUT_RAN:-}" true false "")
+  agent=$(known "${AGENT_OUTCOME:-}" success failure cancelled skipped "")
+  paused=$(known "${PAUSED:-}" true false "")
+  outcome=$(classify "$result" "$checkout" "$agent" "$paused" "$timed_out" "$state" "$stopped")
+  echo "task job: result=$result checkout_ran=$checkout agent=$agent paused=$paused timed_out=$timed_out pr=$state stopped=$stopped"
   if [[ $outcome == none ]]; then
     notice "#$n run $run_id didn't start the agent, so no marker"
+    emit outcome none
     emit failed_for_good false
     return
   fi
+  # Exact, letter case included: GitHub's own comparisons (contains, ==) ignore case.
   [[ $seat =~ ^[abc]$ ]] || die "SEAT must be a, b or c"
 
+  # 1. The marker. Without it the run isn't counted, so a failed post fails the job.
   RETRY_AFTER_SAFE=""
   if [[ $outcome == paused ]]; then
     clamp_retry_after "${RETRY_AFTER:-}"
@@ -184,17 +204,11 @@ cmd_outcome() {
     cancelled) line="Run $run_id on seat $seat: cancelled." ;;
     failed) line="Run $run_id on seat $seat: failed. See the run log." ;;
   esac
-  act gh issue comment "$n" -R "$FLEET_REPO" --body \
-    "<!-- fleet:attempt run=$run_id seat=$seat outcome=$outcome retry_after=$RETRY_AFTER_SAFE -->
-$line"
+  comment_on "$n" "<!-- fleet:attempt run=$run_id seat=$seat outcome=$outcome retry_after=$RETRY_AFTER_SAFE -->
+$line" "$(jq -r .locked <<<"$issue")" || die "posting the marker on #$n failed"
 
-  # Strangers can't comment on a locked PR, so nothing they write reaches the next run there.
-  pr_no=$(jq -r '[.[] | select(.state == "OPEN" and .locked != true)][0].number // empty' <<<"$pulls")
-  if [[ -n $pr_no ]]; then
-    act gh api -X PUT "repos/$FLEET_REPO/issues/$pr_no/lock" --silent
-  fi
-
-  # The caps, after every marker, done included.
+  # 2. The caps, after every marker, done included. A start cap reached while the PR is merged,
+  # queued or set to merge isn't a failure yet: if the PR drops, the router labels it and alerts.
   mk=$(markers "$n")
   if [[ ${DRY_RUN:-0} == 1 ]]; then
     # The marker above wasn't posted, so count it here.
@@ -202,11 +216,25 @@ $line"
   fi
   cap=$(cap_reason <<<"$mk")
   if [[ -n $cap ]] && ! has_label "$issue" fleet:failed; then
-    echo "::warning::#$n marked fleet:failed: $cap"
-    act gh issue edit "$n" -R "$FLEET_REPO" --add-label fleet:failed
-    failed=true
+    if [[ $state == merged || $state == queued || $state == automerge ]]; then
+      notice "#$n reached a cap ($cap), but its PR is $state, so it isn't marked fleet:failed"
+    else
+      echo "::warning::#$n marked fleet:failed: $cap"
+      act gh issue edit "$n" -R "$FLEET_REPO" --add-label fleet:failed
+      failed=true
+    fi
   fi
+
+  # 3. The outputs. Nothing after this line can stop them from being set.
+  emit outcome "$outcome"
   emit failed_for_good "$failed"
+
+  # 4. Strangers can't comment on a locked PR, so nothing they write reaches the next run there.
+  pr_no=$(jq -r '[.[] | select(.state == "OPEN" and .locked != true)][0].number // empty' <<<"$pulls")
+  if [[ -n $pr_no ]]; then
+    act gh api -X PUT "repos/$FLEET_REPO/issues/$pr_no/lock" --silent || warn "locking PR #$pr_no failed"
+  fi
+  return 0
 }
 
 case $cmd in

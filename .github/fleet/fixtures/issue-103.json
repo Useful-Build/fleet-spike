@@ -12,9 +12,7 @@
        "isCrossRepository": false,
        "baseRefName": "fleet/demo",
        "locked": false,
-       "autoMergeRequest": {
-        "enabledAt": "2026-11-17T10:00:00Z"
-       },
+       "autoMergeRequest": null,
        "commits": {
         "nodes": [
          {

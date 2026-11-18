@@ -1,78 +1,127 @@
-$ bash .github/fleet/router.sh
-task runs active: 2, cap 16
-#101 skip-running
-#102 done
-  would run: gh issue close 102 -R fixture/repo --comment Done: the PR from task/102 has merged.
-#103 skip-waiting
-#104 start
+$ env FLEET_ACT_FAIL=gh api -X PUT repos/fixture/repo/issues/141/lock* bash .github/fleet/router.sh
+task runs active: 2, cap 23
+#141 start pr=none
+  would run: gh api -X PUT repos/fixture/repo/issues/141/lock --silent
+  (fails)
+::error::failed: gh api -X PUT repos/fixture/repo/issues/141/lock --silent
+#101 skip-running pr=draft
+#102 done pr=merged
+  would run: gh issue comment 102 -R fixture/repo --body Done: the PR from task/102 has merged.
+  would run: gh issue close 102 -R fixture/repo
+#103 skip-waiting pr=queued
+#104 start pr=failing
   would run: gh api -X PUT repos/fixture/repo/issues/104/lock --silent
   would run: gh workflow run fleet.yml -R fixture/repo -f issue=104 -f seat=a
-#105 skip-stopped
+#105 skip-stopped pr=draft
 #105 stop
   would run: gh run cancel 9005 -R fixture/repo
-#106 skip-failed
-#107 skip-waiting
-#108 start
+#106 skip-failed pr=draft
+#107 skip-waiting pr=automerge
+#108 start pr=ready
   would run: gh api -X PUT repos/fixture/repo/issues/108/lock --silent
   would run: gh workflow run fleet.yml -R fixture/repo -f issue=108 -f seat=a
-#109 skip-author
-#110 skip-blocked
-#111 start
+#109 skip-author pr=-
+#110 skip-blocked pr=none
+#111 start pr=ready
   would run: gh api -X PUT repos/fixture/repo/issues/111/lock --silent
   would run: gh workflow run fleet.yml -R fixture/repo -f issue=111 -f seat=a
-#112 start
+#112 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/112/lock --silent
   would run: gh workflow run fleet.yml -R fixture/repo -f issue=112 -f seat=b
-#113 start
+#113 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/113/lock --silent
   would run: gh workflow run fleet.yml -R fixture/repo -f issue=113 -f seat=c
-#114 start
+#114 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/114/lock --silent
   would run: gh workflow run fleet.yml -R fixture/repo -f issue=114 -f seat=a
-#115 start
+#115 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/115/lock --silent
-  would run: gh workflow run fleet.yml -R fixture/repo -f issue=115 -f seat=a
-#116 failed-cap
+  would run: gh workflow run fleet.yml -R fixture/repo -f issue=115 -f seat=b
+#116 failed-cap pr=none
   would run: gh issue edit 116 -R fixture/repo --add-label fleet:failed
-#117 start
+#117 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/117/lock --silent
   would run: gh workflow run fleet.yml -R fixture/repo -f issue=117 -f seat=b
-#118 start
+#118 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/118/lock --silent
   would run: gh workflow run fleet.yml -R fixture/repo -f issue=118 -f seat=b
-#119 failed-cap
+#119 failed-cap pr=none
   would run: gh issue edit 119 -R fixture/repo --add-label fleet:failed
-#120 start
+#120 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/120/lock --silent
-  would run: gh workflow run fleet.yml -R fixture/repo -f issue=120 -f seat=b
-#121 start
+  would run: gh workflow run fleet.yml -R fixture/repo -f issue=120 -f seat=c
+#121 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/121/lock --silent
-  would run: gh workflow run fleet.yml -R fixture/repo -f issue=121 -f seat=c
-#122 start
+  would run: gh workflow run fleet.yml -R fixture/repo -f issue=121 -f seat=a
+#122 start pr=none
   would run: gh api -X PUT repos/fixture/repo/issues/122/lock --silent
-  would run: gh workflow run fleet.yml -R fixture/repo -f issue=122 -f seat=a
-#123 skip-paused
-#124 skip-author
-#125 start
+  would run: gh workflow run fleet.yml -R fixture/repo -f issue=122 -f seat=b
+#123 start pr=draft
+  would run: gh api -X PUT repos/fixture/repo/issues/123/lock --silent
+  would run: gh workflow run fleet.yml -R fixture/repo -f issue=123 -f seat=c
+#124 skip-author pr=-
+#125 start pr=none
   would run: gh workflow run fleet.yml -R fixture/repo -f issue=125 -f seat=c
-#126 start
+#126 start pr=draft
   would run: gh api -X PUT repos/fixture/repo/issues/126/lock --silent
   would run: gh workflow run fleet.yml -R fixture/repo -f issue=126 -f seat=a
-#127 done
-  would run: gh issue close 127 -R fixture/repo --comment Done: the PR from task/127 has merged.
+#127 done pr=merged
+  would run: gh issue comment 127 -R fixture/repo --body Done: the PR from task/127 has merged.
+  would run: gh issue close 127 -R fixture/repo
 fleet: missing fixture .github/fleet/fixtures/issue-129.json
 ::warning::#129 skipped this round: reading its state failed
-#130 skip-full
-started: 14
+#131 start pr=none
+  would run: gh api -X PUT repos/fixture/repo/issues/131/lock --silent
+  would run: gh workflow run fleet.yml -R fixture/repo -f issue=131 -f seat=c
+#132 start pr=failing
+  would run: gh api -X PUT repos/fixture/repo/issues/132/lock --silent
+  would run: gh workflow run fleet.yml -R fixture/repo -f issue=132 -f seat=a
+#133 start pr=conflicting
+  would run: gh api -X PUT repos/fixture/repo/issues/133/lock --silent
+  would run: gh workflow run fleet.yml -R fixture/repo -f issue=133 -f seat=b
+#134 start pr=none
+  would run: gh api -X PUT repos/fixture/repo/issues/134/lock --silent
+  would run: gh workflow run fleet.yml -R fixture/repo -f issue=134 -f seat=b
+#135 skip-paused pr=none
+#136 skip-paused pr=none
+#137 start pr=none
+  would run: gh api -X PUT repos/fixture/repo/issues/137/lock --silent
+  would run: gh workflow run fleet.yml -R fixture/repo -f issue=137 -f seat=a
+#138 start pr=none
+  would run: gh api -X PUT repos/fixture/repo/issues/138/lock --silent
+  would run: gh workflow run fleet.yml -R fixture/repo -f issue=138 -f seat=a
+#139 failed-cap pr=none
+  would run: gh issue edit 139 -R fixture/repo --add-label fleet:failed
+#140 done pr=merged
+  would run: gh issue comment 140 -R fixture/repo --body Done: the PR from task/140 has merged.
+  would run: gh issue close 140 -R fixture/repo
+#142 skip-waiting pr=automerge
+#130 skip-full pr=none
+started: 21
+failed_tasks=116 119 139
 fleet/demo final PR: not ready, an open task names it
 fleet/done final PR: ready
   would run: gh pr create -R fixture/repo --base main --head fleet/done --title fleet/done into main --body Every fleet task issue for `fleet/done` is closed. Task PRs merged into it:
 
 - #301
 - #302
+  would run: gh workflow run ci.yml -R fixture/repo --ref fleet/done
 fleet/has-pr final PR: a PR into main is already open
 fleet/empty final PR: not ahead of main
-[exit 0]
+fleet/closing final PR: ready
+  would run: gh pr create -R fixture/repo --base main --head fleet/closing --title fleet/closing into main --body Every fleet task issue for `fleet/closing` is closed. Task PRs merged into it:
+
+- #240
+  would run: gh workflow run ci.yml -R fixture/repo --ref fleet/closing
+fleet/orphan final PR: not ready, no closed task names it
+fleet/reviewed final PR: a closed PR into main has this head, not reopened
+fleet/reworked final PR: ready
+  would run: gh pr create -R fixture/repo --base main --head fleet/reworked --title fleet/reworked into main --body Every fleet task issue for `fleet/reworked` is closed. Task PRs merged into it:
+
+- #305
+  would run: gh workflow run ci.yml -R fixture/repo --ref fleet/reworked
+fleet: 1 changes failed
+[exit 1]
 
 $ env FLEET_EVENT_LABEL=fleet:stop FLEET_EVENT_ISSUE=101 bash .github/fleet/router.sh
 #101 stop
@@ -84,6 +133,8 @@ label bug: nothing to do
 [exit 0]
 
 $ env FLEET_STOP_ALL=true bash .github/fleet/router.sh
+#141 stop all: add fleet:stop
+  would run: gh issue edit 141 -R fixture/repo --add-label fleet:stop
 #101 stop all: add fleet:stop
   would run: gh issue edit 101 -R fixture/repo --add-label fleet:stop
 #102 stop all: add fleet:stop
@@ -138,6 +189,28 @@ $ env FLEET_STOP_ALL=true bash .github/fleet/router.sh
 #127 stop all: already stopped
 #129 stop all: add fleet:stop
   would run: gh issue edit 129 -R fixture/repo --add-label fleet:stop
+#131 stop all: add fleet:stop
+  would run: gh issue edit 131 -R fixture/repo --add-label fleet:stop
+#132 stop all: add fleet:stop
+  would run: gh issue edit 132 -R fixture/repo --add-label fleet:stop
+#133 stop all: add fleet:stop
+  would run: gh issue edit 133 -R fixture/repo --add-label fleet:stop
+#134 stop all: add fleet:stop
+  would run: gh issue edit 134 -R fixture/repo --add-label fleet:stop
+#135 stop all: add fleet:stop
+  would run: gh issue edit 135 -R fixture/repo --add-label fleet:stop
+#136 stop all: add fleet:stop
+  would run: gh issue edit 136 -R fixture/repo --add-label fleet:stop
+#137 stop all: add fleet:stop
+  would run: gh issue edit 137 -R fixture/repo --add-label fleet:stop
+#138 stop all: add fleet:stop
+  would run: gh issue edit 138 -R fixture/repo --add-label fleet:stop
+#139 stop all: add fleet:stop
+  would run: gh issue edit 139 -R fixture/repo --add-label fleet:stop
+#140 stop all: add fleet:stop
+  would run: gh issue edit 140 -R fixture/repo --add-label fleet:stop
+#142 stop all: add fleet:stop
+  would run: gh issue edit 142 -R fixture/repo --add-label fleet:stop
 #130 stop all: add fleet:stop
   would run: gh issue edit 130 -R fixture/repo --add-label fleet:stop
 stop all: cancel run 9001
@@ -220,105 +293,170 @@ retry_after=
 [exit 0]
 
 $ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=success PAUSED=false RETRY_AFTER= STARTED=1794913200 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 107
-task job: result=success checkout_ran=true agent=success paused=false timed_out=false pr=automerge
-outcome=done
-pr_ready=true
+task job: result=success checkout_ran=true agent=success paused=false timed_out=false pr=automerge stopped=false
   would run: gh issue comment 107 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=done retry_after= -->
 Run 777 on seat b: done. The PR is ready and set to merge.
-  would run: gh api -X PUT repos/fixture/repo/issues/207/lock --silent
+outcome=done
 failed_for_good=false
+  would run: gh api -X PUT repos/fixture/repo/issues/207/lock --silent
 [exit 0]
 
 $ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=failure PAUSED=false RETRY_AFTER= STARTED=1794915600 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 117
-task job: result=success checkout_ran=true agent=failure paused=false timed_out=false pr=none
-outcome=failed
-pr_ready=false
+task job: result=success checkout_ran=true agent=failure paused=false timed_out=false pr=none stopped=false
   would run: gh issue comment 117 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=failed retry_after= -->
 Run 777 on seat b: failed. See the run log.
 ::warning::#117 marked fleet:failed: two failed runs in a row
   would run: gh issue edit 117 -R fixture/repo --add-label fleet:failed
+outcome=failed
 failed_for_good=true
 [exit 0]
 
 $ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=success PAUSED=false RETRY_AFTER= STARTED=1794913200 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 115
-task job: result=success checkout_ran=true agent=success paused=false timed_out=false pr=none
-outcome=progress
-pr_ready=false
+task job: result=success checkout_ran=true agent=success paused=false timed_out=false pr=none stopped=false
   would run: gh issue comment 115 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=progress retry_after= -->
 Run 777 on seat b: progress saved, not finished. The router starts it again.
 ::warning::#115 marked fleet:failed: 6 starts, cap is 6
   would run: gh issue edit 115 -R fixture/repo --add-label fleet:failed
+outcome=progress
 failed_for_good=true
 [exit 0]
 
 $ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=failure PAUSED=true RETRY_AFTER=2027-01-01T00:00:00Z STARTED=1794915600 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 121
-task job: result=success checkout_ran=true agent=failure paused=true timed_out=false pr=none
-outcome=paused
-pr_ready=false
-::warning::retry_after 2027-01-01T00:00:00Z is more than 8 days ahead, capped at 8 days
+task job: result=success checkout_ran=true agent=failure paused=true timed_out=false pr=none stopped=false
+::warning::retry_after is more than 8 days ahead, capped at 8 days
   would run: gh issue comment 121 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=paused retry_after=2026-11-25T12:00:00Z -->
 Run 777 on seat b: paused on a usage limit until 2026-11-25T12:00:00Z. The router starts it again after that.
+outcome=paused
 failed_for_good=false
 [exit 0]
 
 $ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=failure PAUSED=true RETRY_AFTER=2026-13-45T99:99:99Z STARTED=1794915600 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 121
-task job: result=success checkout_ran=true agent=failure paused=true timed_out=false pr=none
-outcome=paused
-pr_ready=false
-::warning::retry_after '2026-13-45T99:99:99Z' isn't a time, recorded as empty
+task job: result=success checkout_ran=true agent=failure paused=true timed_out=false pr=none stopped=false
+::warning::retry_after isn't a time, recorded as empty
   would run: gh issue comment 121 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=paused retry_after= -->
 Run 777 on seat b: paused on a usage limit. The router starts it again after that.
+outcome=paused
 failed_for_good=false
 [exit 0]
 
 $ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=failure PAUSED=true RETRY_AFTER=2026-11-17T15:00:00Z STARTED=1794915600 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 121
-task job: result=success checkout_ran=true agent=failure paused=true timed_out=false pr=none
-outcome=paused
-pr_ready=false
+task job: result=success checkout_ran=true agent=failure paused=true timed_out=false pr=none stopped=false
   would run: gh issue comment 121 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=paused retry_after=2026-11-17T15:00:00Z -->
 Run 777 on seat b: paused on a usage limit until 2026-11-17T15:00:00Z. The router starts it again after that.
+outcome=paused
 failed_for_good=false
 [exit 0]
 
 $ env TASK_RESULT=failure CHECKOUT_RAN= AGENT_OUTCOME= PAUSED= RETRY_AFTER= STARTED= AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 120
-task job: result=failure checkout_ran= agent= paused= timed_out=false pr=none
-outcome=failed
-pr_ready=false
+task job: result=failure checkout_ran= agent= paused= timed_out=false pr=none stopped=false
   would run: gh issue comment 120 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=failed retry_after= -->
 Run 777 on seat b: failed. See the run log.
+outcome=failed
 failed_for_good=false
 [exit 0]
 
 $ env TASK_RESULT=skipped CHECKOUT_RAN= AGENT_OUTCOME= PAUSED= RETRY_AFTER= STARTED= AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 120
-task job: result=skipped checkout_ran= agent= paused= timed_out=false pr=none
-outcome=none
-pr_ready=false
+task job: result=skipped checkout_ran= agent= paused= timed_out=false pr=none stopped=false
 ::notice::#120 run 777 didn't start the agent, so no marker
+outcome=none
 failed_for_good=false
 [exit 0]
 
 $ env TASK_RESULT=cancelled CHECKOUT_RAN=true AGENT_OUTCOME=cancelled PAUSED=false RETRY_AFTER= STARTED=1794915000 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 120
-task job: result=cancelled checkout_ran=true agent=cancelled paused=false timed_out=false pr=none
-outcome=cancelled
-pr_ready=false
-  would run: gh issue comment 120 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=cancelled retry_after= -->
-Run 777 on seat b: cancelled.
+task job: result=cancelled checkout_ran=true agent=cancelled paused=false timed_out=false pr=none stopped=false
+  would run: gh issue comment 120 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=progress retry_after= -->
+Run 777 on seat b: progress saved, not finished. The router starts it again.
+outcome=progress
 failed_for_good=false
 [exit 0]
 
 $ env TASK_RESULT=success CHECKOUT_RAN=false AGENT_OUTCOME= PAUSED= RETRY_AFTER= STARTED=1794916740 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 120
-task job: result=success checkout_ran=false agent= paused= timed_out=false pr=none
-outcome=none
-pr_ready=false
+task job: result=success checkout_ran=false agent= paused= timed_out=false pr=none stopped=false
 ::notice::#120 run 777 didn't start the agent, so no marker
+outcome=none
 failed_for_good=false
 [exit 0]
 
 $ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=failure PAUSED=false RETRY_AFTER= STARTED=1794896940 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 120
-task job: result=success checkout_ran=true agent=failure paused=false timed_out=true pr=none
-outcome=progress
-pr_ready=false
+task job: result=success checkout_ran=true agent=failure paused=false timed_out=true pr=none stopped=false
   would run: gh issue comment 120 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=progress retry_after= -->
 Run 777 on seat b: progress saved, not finished. The router starts it again.
+outcome=progress
 failed_for_good=false
 [exit 0]
+
+$ env TASK_RESULT=cancelled CHECKOUT_RAN=true AGENT_OUTCOME=cancelled PAUSED=false RETRY_AFTER= STARTED=1794915000 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 105
+task job: result=cancelled checkout_ran=true agent=cancelled paused=false timed_out=false pr=draft stopped=true
+  would run: gh issue comment 105 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=cancelled retry_after= -->
+Run 777 on seat b: cancelled.
+outcome=cancelled
+failed_for_good=false
+  would run: gh api -X PUT repos/fixture/repo/issues/205/lock --silent
+[exit 0]
+
+$ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=success PAUSED=false RETRY_AFTER= STARTED=1794913200 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 125
+task job: result=success checkout_ran=true agent=success paused=false timed_out=false pr=none stopped=false
+  would run: gh api -X DELETE repos/fixture/repo/issues/125/lock --silent
+  would run: gh issue comment 125 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=progress retry_after= -->
+Run 777 on seat b: progress saved, not finished. The router starts it again.
+  would run: gh api -X PUT repos/fixture/repo/issues/125/lock --silent
+outcome=progress
+failed_for_good=false
+[exit 0]
+
+$ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=success PAUSED=false RETRY_AFTER= STARTED=1794913200 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b FLEET_ACT_FAIL=gh issue comment 125 * bash .github/fleet/task.sh outcome 125
+task job: result=success checkout_ran=true agent=success paused=false timed_out=false pr=none stopped=false
+  would run: gh api -X DELETE repos/fixture/repo/issues/125/lock --silent
+  would run: gh issue comment 125 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=progress retry_after= -->
+Run 777 on seat b: progress saved, not finished. The router starts it again.
+  (fails)
+  would run: gh api -X PUT repos/fixture/repo/issues/125/lock --silent
+fleet: posting the marker on #125 failed
+[exit 1]
+
+$ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=success PAUSED=false RETRY_AFTER= STARTED=1794913200 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b FLEET_ACT_FAIL=gh api -X PUT repos/fixture/repo/issues/125/lock* bash .github/fleet/task.sh outcome 125
+task job: result=success checkout_ran=true agent=success paused=false timed_out=false pr=none stopped=false
+  would run: gh api -X DELETE repos/fixture/repo/issues/125/lock --silent
+  would run: gh issue comment 125 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=progress retry_after= -->
+Run 777 on seat b: progress saved, not finished. The router starts it again.
+  would run: gh api -X PUT repos/fixture/repo/issues/125/lock --silent
+  (fails)
+::warning::locking #125 again failed
+outcome=progress
+failed_for_good=false
+[exit 0]
+
+$ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=success PAUSED=false RETRY_AFTER= STARTED=1794913200 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b FLEET_ACT_FAIL=gh api -X PUT repos/fixture/repo/issues/226/lock* bash .github/fleet/task.sh outcome 126
+task job: result=success checkout_ran=true agent=success paused=false timed_out=false pr=draft stopped=false
+  would run: gh issue comment 126 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=progress retry_after= -->
+Run 777 on seat b: progress saved, not finished. The router starts it again.
+outcome=progress
+failed_for_good=false
+  would run: gh api -X PUT repos/fixture/repo/issues/226/lock --silent
+  (fails)
+::warning::locking PR #226 failed
+[exit 0]
+
+$ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=success PAUSED=false RETRY_AFTER= STARTED=1794913200 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 142
+task job: result=success checkout_ran=true agent=success paused=false timed_out=false pr=automerge stopped=false
+  would run: gh issue comment 142 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=done retry_after= -->
+Run 777 on seat b: done. The PR is ready and set to merge.
+::notice::#142 reached a cap (6 starts, cap is 6), but its PR is automerge, so it isn't marked fleet:failed
+outcome=done
+failed_for_good=false
+  would run: gh api -X PUT repos/fixture/repo/issues/242/lock --silent
+[exit 0]
+
+$ env TASK_RESULT=bogus CHECKOUT_RAN=yes AGENT_OUTCOME=::error::x PAUSED=::warning::y RETRY_AFTER= STARTED=1794915600 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 104
+task job: result=invalid checkout_ran=invalid agent=invalid paused=invalid timed_out=false pr=failing stopped=false
+  would run: gh issue comment 104 -R fixture/repo --body <!-- fleet:attempt run=777 seat=b outcome=failed retry_after= -->
+Run 777 on seat b: failed. See the run log.
+outcome=failed
+failed_for_good=false
+  would run: gh api -X PUT repos/fixture/repo/issues/204/lock --silent
+[exit 0]
+
+$ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=success PAUSED=false RETRY_AFTER= STARTED=1794915600 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b SEAT=A bash .github/fleet/task.sh outcome 104
+task job: result=success checkout_ran=true agent=success paused=false timed_out=false pr=failing stopped=false
+fleet: SEAT must be a, b or c
+[exit 1]

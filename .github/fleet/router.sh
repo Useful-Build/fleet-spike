@@ -2,7 +2,7 @@
 # The fleet router: decides, from real GitHub state, which task issues to start, and starts them.
 #
 #   router.sh             act: lock and dispatch task runs, close done issues, label capped ones,
-#                         open the final PR of a finished fleet/<topic> branch
+#                         open the final PR of a finished fleet/<topic> branch and start its ci
 #   router.sh --dry-run   print every decision and the commands it would run, change nothing
 #
 # Env: FLEET_OWNER (required), FLEET_MAX_JOBS (16), FLEET_MAX_STARTS (6), FLEET_REPO (from the
@@ -75,14 +75,19 @@ count_naming() {
 }
 
 # Checks one fleet/<topic> branch and opens its final PR when it's ready. Runs in a subshell:
-# writes "opened" and the PR URL to files in $tmp for the caller.
+# writes "opened", the PR URL and "ci-failed" to files in $tmp for the caller.
 final_pr_for() {
-  local b=$1 open=$2 closed=$3 ahead merged body url
+  local b=$1 sha=$2 open=$3 closed=$4 ahead merged body url
   ahead=$(api_ahead_of_main "$b")
   if ((ahead == 0)); then echo "$b final PR: not ahead of main"; return; fi
   if (($(count_naming "$b" <<<"$open") > 0)); then echo "$b final PR: not ready, an open task names it"; return; fi
   if (($(count_naming "$b" <<<"$closed") == 0)); then echo "$b final PR: not ready, no closed task names it"; return; fi
   if [[ $(api_prs_to_main "$b" | jq length) != 0 ]]; then echo "$b final PR: a PR into main is already open"; return; fi
+  # The owner closed a final PR at this very commit: don't reopen it until the branch moves on.
+  if api_closed_heads_to_main "$b" | jq -e --arg s "$sha" 'index($s) != null' >/dev/null; then
+    echo "$b final PR: a closed PR into main has this head, not reopened"
+    return
+  fi
   merged=$(api_merged_into "$b" | jq -r 'map("- #\(.)") | join("\n")')
   body="Every fleet task issue for \`$b\` is closed. Task PRs merged into it:
 
@@ -91,36 +96,50 @@ ${merged:-none}"
   touch "$tmp/opened"
   if [[ $DRY_RUN == 1 ]]; then
     act gh pr create -R "$FLEET_REPO" --base main --head "$b" --title "$b into main" --body "$body"
-    return
+  else
+    url=$(gh pr create -R "$FLEET_REPO" --base main --head "$b" --title "$b into main" --body "$body")
+    [[ $url =~ ^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[0-9]+$ ]] || die "unexpected gh pr create output: $url"
+    echo "$b final PR: opened $url"
+    echo "$url" >"$tmp/url"
   fi
-  url=$(gh pr create -R "$FLEET_REPO" --base main --head "$b" --title "$b into main" --body "$body")
-  [[ $url =~ ^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[0-9]+$ ]] || die "unexpected gh pr create output: $url"
-  echo "$b final PR: opened $url"
-  echo "$url" >"$tmp/url"
+  # A PR opened with GITHUB_TOKEN starts no ci run by itself, and main requires ci. A dispatch is
+  # the one start GITHUB_TOKEN may make, and its ci check lands on the branch's head commit.
+  if ! act gh workflow run ci.yml -R "$FLEET_REPO" --ref "$b"; then
+    echo "::error::$b final PR: starting ci failed. Run ci on $b by hand."
+    touch "$tmp/ci-failed"
+  fi
 }
 
 # The final PR: a fleet/<topic> branch whose tasks are all finished gets one PR into main.
 # Ready when the branch is ahead of main, at least one closed fleet issue names it as Base, no open
-# fleet issue names it (stopped and failed ones are open too), and no open PR into main exists.
-# Sets FINAL_URLS (space separated) and FINAL_COUNT.
+# fleet issue names it (stopped and failed ones are open too), no open PR into main exists, and
+# no closed, unmerged PR into main has the branch's current head. The issue lists are read fresh
+# here, so a task this round closed counts as closed. Sets FINAL_URLS (space separated) and
+# FINAL_COUNT.
 final_prs() {
-  local open=$1 closed branches b rc
+  local open closed branches b sha rc
   FINAL_URLS="" FINAL_COUNT=0
   branches=$(api_fleet_branches)
   [[ $(jq length <<<"$branches") != 0 ]] || return 0
+  open=$(api_issues_after_round)
   closed=$(api_closed_issues)
-  for b in $(jq -r '.[]' <<<"$branches"); do
+  while IFS=$'\x1f' read -r b sha; do
     if [[ ! $b =~ ^fleet/[A-Za-z0-9._-]+$ ]]; then
-      warn "branch $b: name not of the form fleet/<topic>, skipped"
+      warn "a fleet branch name isn't of the form fleet/<topic>, skipped"
       continue
     fi
-    rm -f "$tmp/opened" "$tmp/url"
+    if [[ ! $sha =~ ^[0-9a-f]{40}$ ]]; then
+      warn "branch $b: head commit unreadable, skipped"
+      continue
+    fi
+    rm -f "$tmp/opened" "$tmp/url" "$tmp/ci-failed"
     # Not inside an if: errexit must stay on in the subshell. One branch's error skips that branch.
     set +e
+    # stdin closed: the loop reads the branch list from it, and no gh call may take it.
     (
       set -e
-      final_pr_for "$b" "$open" "$closed"
-    )
+      final_pr_for "$b" "$sha" "$open" "$closed"
+    ) </dev/null
     rc=$?
     set -e
     if ((rc != 0)); then
@@ -130,7 +149,8 @@ final_prs() {
     fi
     if [[ -f $tmp/opened ]]; then FINAL_COUNT=$((FINAL_COUNT + 1)); fi
     if [[ -s $tmp/url ]]; then FINAL_URLS="${FINAL_URLS:+$FINAL_URLS }$(cat "$tmp/url")"; fi
-  done
+    if [[ -f $tmp/ci-failed ]]; then failures=$((failures + 1)); fi
+  done < <(jq -r '.[] | "\(.name)\u001f\(.sha)"' <<<"$branches")
 }
 
 tmp=$(mktemp -d)
@@ -159,6 +179,7 @@ esac
 
 issues=$(api_issues)
 started=0
+failed_tasks=""
 if [[ $(jq length <<<"$issues") != 0 ]]; then
   active=$(api_active_runs)
   running=$(jq '[.[] | select(.displayTitle | test("^task #[0-9]+$"))] | length' <<<"$active")
@@ -175,7 +196,7 @@ if [[ $(jq length <<<"$issues") != 0 ]]; then
       set -e
       decide "$n" "$issue" "$active"
       # \x1f, not a tab: read collapses runs of whitespace separators, and SEAT is often empty.
-      printf '%s\x1f%s\x1f%s' "$DECISION" "$SEAT" "$REASON"
+      printf '%s\x1f%s\x1f%s\x1f%s' "$DECISION" "$SEAT" "$PR_STATE" "$REASON"
     )
     rc=$?
     set -e
@@ -183,11 +204,11 @@ if [[ $(jq length <<<"$issues") != 0 ]]; then
       warn "#$n skipped this round: reading its state failed"
       continue
     fi
-    IFS=$'\x1f' read -r DECISION SEAT REASON <<<"$line"
+    IFS=$'\x1f' read -r DECISION SEAT PR_STATE REASON <<<"$line"
     if [[ $DECISION == start ]] && ((slots <= 0)); then
       DECISION=skip-full REASON="no free job slot"
     fi
-    echo "#$n $DECISION: $REASON"
+    echo "#$n $DECISION pr=$PR_STATE: $REASON"
     case $DECISION in
       start)
         [[ $SEAT =~ ^[abc]$ ]] || die "bad seat '$SEAT' for #$n"
@@ -201,10 +222,18 @@ if [[ $(jq length <<<"$issues") != 0 ]]; then
         fi
         ;;
       done)
-        try_act gh issue close "$n" -R "$FLEET_REPO" --comment "Done: the PR from task/$n has merged." || true
+        if ! comment_on "$n" "Done: the PR from task/$n has merged." "$(jq -r .locked <<<"$issue")"; then
+          echo "::error::failed: comment on #$n"
+          failures=$((failures + 1))
+        fi
+        try_act gh issue close "$n" -R "$FLEET_REPO" || true
         ;;
       failed-cap)
-        try_act gh issue edit "$n" -R "$FLEET_REPO" --add-label fleet:failed || true
+        # The outcome job alerts for the caps it applies. These are the ones it left: a start cap
+        # reached while the PR was set to merge, then dropped, or a label that failed there.
+        if try_act gh issue edit "$n" -R "$FLEET_REPO" --add-label fleet:failed; then
+          failed_tasks="${failed_tasks:+$failed_tasks }$n"
+        fi
         ;;
       skip-stopped)
         # A stop event's run can fail or race a round, so every round also cancels whatever a
@@ -216,9 +245,10 @@ if [[ $(jq length <<<"$issues") != 0 ]]; then
     esac
   done
   echo "started: $started"
+  if [[ -n $failed_tasks ]]; then emit failed_tasks "$failed_tasks"; fi
 fi
 
-final_prs "$issues"
+final_prs
 if [[ -n $FINAL_URLS ]]; then emit final_prs "$FINAL_URLS"; fi
 if [[ $(jq length <<<"$issues") == 0 && $FINAL_COUNT == 0 ]]; then
   echo "nothing to do"
