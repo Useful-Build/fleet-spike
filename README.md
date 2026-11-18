@@ -6,7 +6,7 @@ A test bed for running Claude Code agents as GitHub Actions jobs. Each task is a
 
 Once, by an admin, before the first task starts:
 
-1. **Rulesets:** apply `.github/rulesets/main.json`, then `.github/rulesets/fleet.json` (Settings, Rules, Rulesets, Import a ruleset). Both must be on before the first task is started: the seat environments only protect anything while `main` is protected.
+1. **Rulesets:** apply `.github/rulesets/main.json`, then `.github/rulesets/fleet.json` (Settings, Rules, Rulesets, Import a ruleset). Both must be on before the first task is started: the seat environments only protect anything while `main` is protected. `fleet.json` has no merge queue: GitHub refuses one on a wildcard pattern, so each feature branch gets its own queue ruleset when you start it (below).
 2. **Labels:** create `fleet`, `fleet:stop` and `fleet:failed`. The router doesn't create them.
 3. **Variables:** set the repo variables `FLEET_OWNER`, `FLEET_MAX_JOBS` and `FLEET_MAX_STARTS` (see below).
 4. **Environments:** create `fleet-seat-a`, `fleet-seat-b` and `fleet-seat-c` (each holds `FLEET_SEAT_TOKEN` and `FLEET_AGENTS_CONFIG_KEY`) and `fleet-alert` (holds `FLEET_TELEGRAM_BOT_TOKEN` and `FLEET_TELEGRAM_CHAT_ID`). Limit each to the branch `main`.
@@ -22,7 +22,7 @@ For a second repo, also:
 
 ## Start a task
 
-1. Create the feature branch `fleet/<topic>` from `main`, as the owner. If GitHub refuses it with the fleet ruleset on, create the branch before turning that ruleset on.
+1. Once per feature, as the owner on your own machine: `bash .github/fleet/new-feature.sh <topic>`. It creates `fleet/<topic>` from `main` and the ruleset `fleet/<topic> queue`, which puts that branch behind the merge queue. `--dry-run` prints the two requests and changes nothing.
 2. Write an issue as the owner (the login in `FLEET_OWNER`). The body is the brief: what to build, how it's accepted and the commands that prove it. Add a line `Base: fleet/<topic>`.
 3. Add the label `fleet`.
 
@@ -31,6 +31,8 @@ The router locks the issue, then starts the task within a few seconds, and again
 A task waits while another open issue blocks it (GitHub's "blocked by" on the issue).
 
 When every task issue for a `fleet/<topic>` branch is closed, the router opens the PR from that branch into `main`, starts `ci` on it, and Telegram says it's ready for review. A final PR you close isn't opened again until the branch gets a new commit.
+
+After the final PR has merged, delete the branch's queue ruleset: `gh api -X DELETE repos/<owner>/<repo>/rulesets/<id>`, with the id from `gh api repos/<owner>/<repo>/rulesets --jq '.[] | select(.name == "fleet/<topic> queue") | .id'`.
 
 ## Stop a task
 
@@ -67,6 +69,7 @@ Secrets live in environments that only `main` may use: `fleet-seat-a`, `fleet-se
 - `.github/fleet/classify-test.sh`: checks how the outcome job classifies a run.
 - `.github/fleet/FAILURES.md`: how restarts can go wrong and what stops each case.
 - `.github/rulesets/`: the rulesets for `main` and `fleet/**`, applied by the repo admin.
+- `.github/fleet/new-feature.sh`: starts a feature branch and its queue ruleset.
 
 ## The project tasks change
 
