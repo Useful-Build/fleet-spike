@@ -85,16 +85,6 @@
    ]
   },
   {
-   "number": 140,
-   "state": "closed",
-   "body": "Do task 140.\r\nBase: fleet/closing\r\n",
-   "labels": [
-    {
-     "name": "fleet"
-    }
-   ]
-  },
-  {
    "number": 94,
    "state": "closed",
    "body": "Base: fleet/reviewed\n",
@@ -508,6 +498,16 @@
    "number": 139,
    "state": "open",
    "body": "Do task 139.\r\nBase: fleet/demo\r\n",
+   "labels": [
+    {
+     "name": "fleet"
+    }
+   ]
+  },
+  {
+   "number": 140,
+   "state": "open",
+   "body": "Do task 140.\r\nBase: fleet/closing\r\n",
    "labels": [
     {
      "name": "fleet"

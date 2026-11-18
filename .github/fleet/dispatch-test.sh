@@ -36,6 +36,9 @@
 #   can't be read) fails that branch's check red, and no final PR opens. It never reads as "a PR is
 #   already open", "no closed PR has this head" or "no task names it".
 # - task.sh pr-state whose PR read fails fails the step and writes no pr_state.
+# - The round that closes the last task of a branch opens its final PR, though GitHub's issue list
+#   still shows that issue open (the stub answers every read of the open issues the same, as the
+#   list did live). A close that fails leaves the issue open, and no final PR opens.
 # - fleet.yml's merged-round job, cut out of the file: a plain round dispatched on main, red
 #   without a run id, and its YAML limits (see that case).
 # Seats: no markers, so the seat is "abc"[issue number mod 3].
@@ -65,7 +68,9 @@ budget_json() {
 }
 unexpected() { echo "stub gh: unexpected call: $*" >&2; exit 97; }
 case "$1 ${2:-}" in
-  "issue edit") exit 0 ;;
+  "issue edit" | "issue comment") exit 0 ;;
+  # close-fail: closing an issue fails.
+  "issue close") if [[ -f $d/close-fail ]]; then echo "stub: HTTP 502" >&2; exit 1; fi; exit 0 ;;
   "pr create") echo "https://github.com/$R/pull/300"; exit 0 ;;
   "api "*) shift ;;
   *) unexpected "$@" ;;
@@ -119,7 +124,7 @@ case "$*" in
     n=${3#repos/"$R"/issues/}
     printf '[%s]\n' "$(or_default "$d/comments-${n%%/*}.json" '[]')"
     ;;
-  "-X PUT repos/$R/issues/"*"/lock --silent") ;;
+  "-X PUT repos/$R/issues/"*"/lock --silent" | "-X DELETE repos/$R/issues/"*"/lock --silent") ;;
   "-X POST repos/$R/actions/runs/"*"/cancel --silent")
     # cancel-fail: every cancel fails.
     if [[ -f $d/cancel-fail ]]; then echo "stub: HTTP 500" >&2; exit 1; fi
@@ -665,6 +670,39 @@ scenario pr-state-fails
 touch "$STUB/graphql-fail"
 task_step pr-state 341 BASE=fleet/x
 if grep -q "^pr_state=" "$STUB/output" 2>/dev/null; then fail "wrote a pr_state"; fi
+want_exit 1
+done_case
+
+# The last task of fleet/x, #260, has its PR merged. The round closes it, and the open issues read
+# again for the final PR still list it, as GitHub's list did live (run 44256227996). The final PR
+# opens, and ci starts on fleet/x, green.
+last_task() {
+  final_ready
+  echo '[]' >"$STUB/closed.json"
+  issue 260 | jq -s 'map(.body = "brief\nBase: fleet/x")' >"$STUB/issues.json"
+  echo '[{"number": 70, "state": "MERGED", "isDraft": false, "isInMergeQueue": false, "isCrossRepository": false,
+    "baseRefName": "fleet/x", "locked": true, "mergeable": "UNKNOWN", "autoMergeRequest": null,
+    "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "SUCCESS"}}}]}}]' >"$STUB/pulls.json"
+}
+scenario last-task-lag
+last_task
+route
+want_out "#260 done pr=merged: PR #70 merged"
+want_call "issue close 260 -R fixture/repo"
+want_out "fleet/x final PR: ready"
+want_call "api -X POST repos/fixture/repo/actions/workflows/ci.yml/dispatches -f ref=fleet/x --silent"
+want_output "final_prs=https://github.com/fixture/repo/pull/300"
+want_exit 0
+done_case
+
+# The same, but the close fails: #260 is still open, so no final PR, and the round is red.
+scenario last-task-close-fails
+last_task
+touch "$STUB/close-fail"
+route
+want_out "fleet/x final PR: not ready, an open task names it"
+want_no_call "pr create"
+want_out "fleet: 1 changes failed"
 want_exit 1
 done_case
 

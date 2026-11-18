@@ -124,15 +124,26 @@ ${merged:-none}"
 # Ready when the branch is ahead of main, at least one closed fleet issue names it as Base, no open
 # fleet issue names it (stopped and failed ones are open too), no open PR into main exists, and
 # no closed, unmerged PR into main has the branch's current head. The issue lists are read fresh
-# here, so a task this round closed counts as closed. Sets FINAL_URLS (space separated) and
-# FINAL_COUNT.
+# here, but GitHub's lists can still show an issue as open seconds after this round closed it, so
+# the issues in $closed_now (closed by this round) count as closed whatever the lists say: moved
+# out of the open list and into the closed one, as the round read them. Sets FINAL_URLS (space
+# separated) and FINAL_COUNT.
 final_prs() {
-  local open closed branches b sha rc
+  local open closed branches b sha rc ids
   FINAL_URLS="" FINAL_COUNT=0
   branches=$(api_fleet_branches)
   [[ $(jq length <<<"$branches") != 0 ]] || return 0
   open=$(api_issues_after_round)
   closed=$(api_closed_issues)
+  if [[ -n $closed_now ]]; then
+    # shellcheck disable=SC2086 # numbers only, split on purpose
+    ids=$(jq -nc '$ARGS.positional | map(tonumber)' --args $closed_now)
+    open=$(jq --argjson ids "$ids" 'map(select(.number as $n | $ids | index($n) | not))' <<<"$open")
+    # On stdin, not as an argument: the round's issue list can pass the 128 KB one argument may hold.
+    closed=$(printf '%s\n%s\n' "$closed" "$issues" | jq -s --argjson ids "$ids" '
+      ([.[0][] | select(.number as $n | $ids | index($n) | not)]
+        + [.[1][] | select(.number as $n | $ids | index($n))])')
+  fi
   while IFS=$'\x1f' read -r b sha; do
     if [[ ! $b =~ ^fleet/[A-Za-z0-9._-]+$ ]]; then
       warn "a fleet branch name isn't of the form fleet/<topic>, skipped"
@@ -218,6 +229,7 @@ if [[ -n $low ]]; then
 fi
 
 issues=$(api_issues)
+closed_now=""
 started=0
 failed_tasks=""
 dispatched=""
@@ -307,7 +319,7 @@ if [[ $(jq length <<<"$issues") != 0 ]]; then
           echo "::error::failed: comment on #$n"
           failures=$((failures + 1))
         fi
-        try_act gh issue close "$n" -R "$FLEET_REPO" || true
+        if try_act gh issue close "$n" -R "$FLEET_REPO"; then closed_now+="$n "; fi
         ;;
       failed-cap)
         # The outcome job alerts for the caps it applies. These are the ones it left: a start cap
