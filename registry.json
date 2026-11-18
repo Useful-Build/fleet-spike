@@ -1,4 +1,5 @@
 [
   { "id": "alpha", "name": "Alpha" },
-  { "id": "beta", "name": "Beta" }
+  { "id": "beta", "name": "Beta" },
+  { "id": "delta", "name": "Delta" }
 ]
