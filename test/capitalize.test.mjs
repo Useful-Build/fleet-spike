@@ -18,6 +18,10 @@ test("capitalizes a single character", () => {
   assert.equal(capitalize("a"), "A");
 });
 
+test("capitalizes a first character outside the BMP without splitting it", () => {
+  assert.equal(capitalize("\u{10428}bc"), "\u{10400}bc");
+});
+
 test("returns an empty string for an empty string", () => {
   assert.equal(capitalize(""), "");
 });
