@@ -36,6 +36,8 @@
 #   can't be read) fails that branch's check red, and no final PR opens. It never reads as "a PR is
 #   already open", "no closed PR has this head" or "no task names it".
 # - task.sh pr-state whose PR read fails fails the step and writes no pr_state.
+# - fleet.yml's merged-round job, cut out of the file: a plain round dispatched on main, red
+#   without a run id, and its YAML limits (see that case).
 # Seats: no markers, so the seat is "abc"[issue number mod 3].
 set -euo pipefail
 
@@ -124,16 +126,23 @@ case "$*" in
     ;;
   "-X POST repos/$R/actions/workflows/ci.yml/dispatches -f ref="*" --silent") ;;
   "-X POST repos/$R/actions/workflows/fleet.yml/dispatches "*)
-    n="" details=false prev=""
+    # dispatch-<issue>: the answer, or FAIL. dispatch- (no issue) is a plain round's. --jq is
+    # applied as gh does, and like gh it prints nothing for an empty body.
+    n="" details=false prev="" filter=""
     for a in "$@"; do
       if [[ $a == "inputs[issue]="* ]]; then n=${a#"inputs[issue]="}; fi
       if [[ $prev == -F && $a == return_run_details=true ]]; then details=true; fi
+      if [[ $prev == --jq ]]; then filter=$a; fi
       prev=$a
     done
     answer=$(cat "$d/dispatch-$n")
     if [[ $answer == FAIL ]]; then echo "stub: HTTP 422" >&2; exit 1; fi
     # 204 No Content unless the run's details were asked for.
-    if [[ $details == true ]]; then printf '%s' "$answer"; fi
+    if [[ $details == true && -n $filter && -n $answer ]]; then
+      jq -r "$filter" <<<"$answer"
+    elif [[ $details == true ]]; then
+      printf '%s' "$answer"
+    fi
     ;;
   "repos/$R/actions/runs/"*" --jq .status")
     id=${1#repos/"$R"/actions/runs/}
@@ -696,6 +705,55 @@ want_out "task runs active: 12, cap 16"
 want_out "#331 skip-running pr=none: a task #331 run is queued or running"
 want_no_call "fleet.yml/dispatches"
 want_exit 0
+done_case
+
+# The merged-round job in fleet.yml: a PR merged into a fleet branch starts a round on main. Its
+# shell is cut out of fleet.yml and run against the stub gh, and its YAML is checked for what can't
+# run here. Rules: the dispatch is fleet.yml with ref main and return_run_details as a JSON boolean,
+# and no inputs (a plain round, not a task run and not after_run); a 204, or an answer without a
+# numeric id, is an error and red. The job checks out nothing and uses no action (the file is the
+# fleet branch's copy), has actions: write only, runs only for a merged PR from this repo, and the
+# trigger is pull_request closed on fleet/**. The router job never runs on that event.
+wf="$here/../workflows/fleet.yml"
+job=$(awk '/^  merged-round:$/ { on = 1; print; next } on && /^  [a-z]/ { exit } on' "$wf")
+script=$(awk '/^        run: \|$/ { on = 1; next } on && /^          / { print substr($0, 11); next }
+  on && /^ *$/ { print ""; next } on { exit }' <<<"$job")
+# merged_round: run the job's shell as its step does, with the stub gh first on PATH.
+merged_round() {
+  code=0
+  out=$(env PATH="$tmp/bin:$PATH" GH_TOKEN=stub REPO=fixture/repo bash -c "$script" 2>&1) || code=$?
+}
+
+scenario merged-round
+ok 6001 >"$STUB/dispatch-"
+merged_round
+want_call "api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true --jq .workflow_run_id // empty"
+want_no_call "inputs["
+want_out "started router run 6001"
+want_exit 0
+done_case
+
+scenario merged-round-no-id
+: >"$STUB/dispatch-"
+merged_round
+want_out "::error::the dispatch was accepted but returned no run id, so the round it started can't be found"
+want_exit 1
+done_case
+
+scenario merged-round-yaml
+[[ -n $script ]] || fail "no run script in the merged-round job"
+perms=$(awk '/^    permissions:/ { on = 1; next } on && /^      / { print; next } on { exit }' <<<"$job")
+[[ $perms == "      actions: write" ]] || fail "merged-round permissions are '$perms', want actions: write only"
+if grep -qE '^ +(- )?uses:' <<<"$job"; then fail "merged-round uses an action"; fi
+grep -qF "github.event_name == 'pull_request' && github.event.pull_request.merged &&" <<<"$job" ||
+  fail "merged-round doesn't require a merged PR"
+grep -qF "github.event.pull_request.head.repo.full_name == github.repository" <<<"$job" ||
+  fail "merged-round doesn't require a PR from this repo"
+trigger=$(awk '/^  pull_request:$/ { on = 1; next } on && /^    / { print; next } on && !/^ *#/ { exit }' "$wf")
+[[ $trigger == $'    types: [closed]\n    branches: ["fleet/**"]' ]] ||
+  fail "the pull_request trigger is '$trigger', want types [closed] and branches fleet/**"
+router_if=$(awk '/^  router:$/ { on = 1; next } on && /^    if:/ { getline; print; exit }' "$wf")
+grep -qF "github.event_name != 'pull_request'" <<<"$router_if" || fail "the router job can run on a pull_request event"
 done_case
 
 echo "dispatch-test: all cases match"

@@ -30,7 +30,7 @@ The router locks the issue, then starts the task within a few seconds. When a ta
 
 A task waits while another open issue blocks it (GitHub's "blocked by" on the issue).
 
-A round closes the issue of a merged task PR and starts the tasks it was blocking. A merge that lands after its task run has ended waits for the next round: a label event, another task run ending or the scheduled round.
+A round closes the issue of a merged task PR and starts the tasks it was blocking. When a PR merges into a `fleet/<topic>` branch, a round starts on `main` right away, so the issue closes even when the merge lands after its task run ended. A branch cut from `main` before that trigger existed doesn't have it: once its PRs have merged, run the `fleet` workflow with no inputs.
 
 When every task issue for a `fleet/<topic>` branch is closed, the router opens the PR from that branch into `main`, starts `ci` on it, and Telegram says it's ready for review. A final PR you close isn't opened again until the branch gets a new commit.
 
@@ -66,7 +66,7 @@ Secrets live in environments that only `main` may use: `fleet-seat-a`, `fleet-se
 
 ## How it works
 
-- `.github/workflows/fleet.yml`: the router, the agent's task job, the outcome job that judges it, the next-round job that starts a round when a task run ends, and the Telegram alerts.
+- `.github/workflows/fleet.yml`: the router, the agent's task job, the outcome job that judges it, the next-round job that starts a round when a task run ends, the merged-round job that starts one when a PR merges into a fleet branch, and the Telegram alerts.
 - `.github/fleet/router.sh`: what to start. `bash .github/fleet/router.sh --dry-run` prints its decisions and changes nothing.
 - `.github/fleet/router-test.sh`: runs those decisions against the fixtures and compares them with `fixtures/expected.txt`, which is written by hand from the rules.
 - `.github/fleet/classify-test.sh`: checks how the outcome job classifies a run.
