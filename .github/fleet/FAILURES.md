@@ -40,6 +40,7 @@ A start is a run with outcome `progress`, `failed` or `done`. `paused` and `canc
 
 ## Known and accepted
 
+- The rulesets on `main` and `fleet/**` (and each `fleet/<topic> queue`) let the repo admin role bypass them. It's there for the owner only: to create feature branches (`new-feature.sh`), and to merge workflow fixes the owner's own agents open, since an author can't approve their own PR. The bots have no bypass.
 - The rules deploy key reads the whole private `agents-config` repo, not just the files copied to `~/.claude`. A separate rules-only repo with its own key would limit that. Not taken this round.
 - The Claude app may hold the Workflows permission. A dedicated GitHub App without it, passed as `github_token`, would close the OIDC route in 21. Not taken this round.
 - The Workflows permission matters because a minted token could push a workflow to `task/<n>`. That workflow's `GITHUB_TOKEN` can ask for `issues: write` and `actions: write`, which is enough to forge markers, remove `fleet:stop` or `fleet:failed` and dispatch `fleet.yml` (21). The rulesets still stop it from reaching `main` or `fleet/**`. Accepted until the dedicated App is used.
