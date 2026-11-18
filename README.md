@@ -11,10 +11,18 @@ Once, by an admin, before the first task starts:
 3. **Variables:** set the repo variables `FLEET_OWNER`, `FLEET_MAX_JOBS` and `FLEET_MAX_STARTS` (see below).
 4. **Environments:** create `fleet-seat-a`, `fleet-seat-b` and `fleet-seat-c` (each holds `FLEET_SEAT_TOKEN` and `FLEET_AGENTS_CONFIG_KEY`) and `fleet-alert` (holds `FLEET_TELEGRAM_BOT_TOKEN` and `FLEET_TELEGRAM_CHAT_ID`). Limit each to the branch `main`.
 5. **Actions:** turn on "Allow GitHub Actions to create and approve pull requests" (Settings, Actions, General), so the router can open the final PR.
+6. **Pull requests:** turn on "Allow auto-merge" (Settings, General), or no task can finish.
+7. **Claude app:** install the Claude GitHub App on the repo.
+
+For a second repo, also:
+
+- The repo must be owned by an organization and be public (merge queue and rulesets).
+- Set `.github/CODEOWNERS` to the new owner.
+- `.github/workflows/fleet.yml` reads the rules from `repository: wasimjalali/agents-config`. If you use another rules repo, change that line and store its read-only deploy key as `FLEET_AGENTS_CONFIG_KEY` in each seat environment.
 
 ## Start a task
 
-1. Create the feature branch `fleet/<topic>` from `main`.
+1. Create the feature branch `fleet/<topic>` from `main`, as the owner. If GitHub refuses it with the fleet ruleset on, create the branch before turning that ruleset on.
 2. Write an issue as the owner (the login in `FLEET_OWNER`). The body is the brief: what to build, how it's accepted and the commands that prove it. Add a line `Base: fleet/<topic>`.
 3. Add the label `fleet`.
 
