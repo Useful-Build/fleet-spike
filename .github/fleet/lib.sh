@@ -226,19 +226,23 @@ api_pulls() {
 # Runs of fleet.yml that haven't finished, as [{databaseId, displayTitle, status}]. One request per
 # status and page of 100. The REST list takes one status per request, and gh run list would add a
 # workflow lookup to each. The fixture runs.json is the runs' workflow_runs entries, all statuses.
+# A live run object is about 13 KB, and Linux refuses a program argument of 128 KB or more, so
+# each page keeps only the three fields at once and the pages are joined on stdin, never passed as
+# an argument. This always runs inside $(...), where errexit is off, so every step has its own die.
 api_active_runs() {
-  local s all="[]" page
+  local s all="" page
   if [[ -n ${FLEET_FIXTURES:-} ]]; then
-    all=$(fixture runs)
+    all=$(fixture runs | jq -c '[.[] | {id, display_title, status}]') || die "reading the runs fixture failed"
   else
     for s in $ACTIVE_STATUSES; do
       page=$(gh api --paginate --slurp \
         "repos/$FLEET_REPO/actions/workflows/fleet.yml/runs?status=$s&exclude_pull_requests=true&per_page=100" |
-        jq '[.[].workflow_runs[]]') || die "listing $s runs failed"
-      all=$(jq -n --argjson a "$all" --argjson b "$page" '$a + $b')
+        jq -c '[.[].workflow_runs[] | {id, display_title, status}]') || die "listing $s runs failed"
+      all+=$page$'\n'
     done
   fi
-  jq 'map({databaseId: .id, displayTitle: .display_title, status})' <<<"$all"
+  jq -s 'add | map({databaseId: .id, displayTitle: .display_title, status})' <<<"$all" ||
+    die "joining the run lists failed"
 }
 
 # The status of one run (queued, in_progress, completed, ...), or "unknown" when it can't be read
