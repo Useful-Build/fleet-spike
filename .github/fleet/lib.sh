@@ -83,6 +83,30 @@ emit() {
   if [[ -n ${GITHUB_OUTPUT:-} ]]; then echo "$1=$2" >>"$GITHUB_OUTPUT"; fi
 }
 
+# Prints the REST budget this job's token has left, as one line:
+#   fleet budget: 812/1000, resets 01:59 UTC (router start)
+# $1 says where in the job it was read. Sets BUDGET_LEFT to the requests left, or to nothing when
+# the budget can't be read, which is a warning and never a failure. GET /rate_limit doesn't count
+# against the budget. The fixture is rate_limit.json, and a missing one can't be read.
+budget() {
+  local raw="" line limit reset
+  BUDGET_LEFT=""
+  if [[ -n ${FLEET_FIXTURES:-} ]]; then
+    raw=$(cat "$FLEET_FIXTURES/rate_limit.json" 2>/dev/null) || raw=""
+  else
+    raw=$(gh api rate_limit 2>/dev/null) || raw=""
+  fi
+  if line=$(jq -er '.resources.core
+      | select([.remaining, .limit, .reset] | all(type == "number" and . >= 0 and . == floor))
+      | "\(.remaining) \(.limit) \(.reset | strftime("%H:%M"))"' <<<"$raw" 2>/dev/null); then
+    read -r BUDGET_LEFT limit reset <<<"$line"
+    echo "fleet budget: $BUDGET_LEFT/$limit, resets $reset UTC ($1)"
+  else
+    warn "fleet budget: can't read it ($1)"
+  fi
+  return 0
+}
+
 fixture() {
   local f="$FLEET_FIXTURES/$1.json"
   [[ -f $f ]] || die "missing fixture $f"

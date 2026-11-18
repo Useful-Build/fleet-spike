@@ -156,7 +156,9 @@ final_prs() {
 }
 
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+# The budget line at the end prints on every way out, a red round included.
+trap 'budget "router end"; rm -rf "$tmp"' EXIT
+budget "router start"
 
 if [[ ${FLEET_STOP_ALL:-false} == true ]]; then
   stop_all

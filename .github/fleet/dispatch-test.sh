@@ -19,6 +19,8 @@
 #   pending, requested).
 # - A run list that fails while waiting is a warning naming the task, then the run counts as
 #   missing, and the outputs are still written.
+# - Each round prints the budget left at its start and its end. A budget that can't be read is a
+#   warning, and the round goes on.
 # Seats: no markers, so the seat is "abc"[issue number mod 3].
 set -euo pipefail
 
@@ -47,6 +49,11 @@ case "$1 ${2:-}" in
   *) unexpected "$@" ;;
 esac
 case "$*" in
+  rate_limit)
+    # rate-limit-fail: the read fails. rate_limit.json: the answer, else 900 of 1000 left.
+    if [[ -f $d/rate-limit-fail ]]; then echo "stub: HTTP 500" >&2; exit 1; fi
+    or_default "$d/rate_limit.json" '{"resources": {"core": {"limit": 1000, "used": 100, "remaining": 900, "reset": 1794918000}}}'
+    ;;
   "--paginate --slurp repos/$R/actions/workflows/fleet.yml/runs?status="*"&exclude_pull_requests=true&per_page=100")
     # One read of the active runs asks for each status in turn, queued first, one page each. Each
     # line of $STUB/runs is "id|title|status|n": the run is listed from the n-th read on.
@@ -167,6 +174,9 @@ for s in queued in_progress waiting pending requested; do
   want_call "api --paginate --slurp repos/fixture/repo/actions/workflows/fleet.yml/runs?status=$s&exclude_pull_requests=true&per_page=100"
 done
 want_sleeps 1
+want_call "api rate_limit"
+want_out "fleet budget: 900/1000, resets 12:20 UTC (router start)"
+want_out "fleet budget: 900/1000, resets 12:20 UTC (router end)"
 want_exit 0
 done_case
 
@@ -269,6 +279,20 @@ want_sleeps 12
 want_output "final_prs=https://github.com/fixture/repo/pull/300"
 want_out "fleet: 1 changes failed"
 want_exit 1
+done_case
+
+# The budget can't be read: a warning at the start and at the end, and the round runs as usual.
+scenario budget-unreadable
+issue 261 | jq -s . >"$STUB/issues.json"
+ok 5061 >"$STUB/dispatch-261"
+echo "5061|task #261|queued|2" >"$STUB/runs"
+touch "$STUB/rate-limit-fail"
+route
+want_out "::warning::fleet budget: can't read it (router start)"
+want_out "::warning::fleet budget: can't read it (router end)"
+want_call "$(dispatch_call 261 a)"
+want_out "#261 run 5061 is in the run list"
+want_exit 0
 done_case
 
 echo "dispatch-test: all cases match"

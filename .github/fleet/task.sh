@@ -253,6 +253,10 @@ case $cmd in
   branch) cmd_branch ;;
   usage) cmd_usage ;;
   pr-state) cmd_pr_state ;;
-  outcome) cmd_outcome ;;
+  outcome)
+    # Printed on every way out, a failed marker post included.
+    trap 'budget "outcome end"' EXIT
+    cmd_outcome
+    ;;
   *) die "unknown subcommand: $cmd" ;;
 esac
