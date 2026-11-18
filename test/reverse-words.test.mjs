@@ -10,6 +10,10 @@ test("collapses extra spaces to single spaces", () => {
   assert.equal(reverseWords("  one   two  three  "), "three two one");
 });
 
+test("treats tabs and newlines as spaces", () => {
+  assert.equal(reverseWords("one\ttwo\nthree"), "three two one");
+});
+
 test("returns one word unchanged", () => {
   assert.equal(reverseWords("hello"), "hello");
 });
