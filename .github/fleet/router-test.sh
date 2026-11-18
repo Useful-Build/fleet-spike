@@ -39,6 +39,18 @@
 #   143 progress on c, then cancelled on a: only the progress moves the rotation, so a
 #   144 paused on b 30 minutes ago, retry_after unreadable: b is blocked for an hour, so c
 #   141 is created first, so its failed lock comes before the slots run out.
+# after-run/: a round a task run started, with that run's id. Tasks 160 to 163 each have a run in
+# progress (9160 to 9163). 160's run just recorded progress on a; 162's just paused on b until
+# 13:00 (its own run starts no round, but any round must still skip that seat); 163's just failed
+# for the second time in a row. Only the named run is left out.
+# Waiting for dispatched runs: 9001 is in runs.json; 9150 isn't, and has finished; 9151 isn't,
+# though reading it by id says it's in progress (the list lags); 9152 can't be read at all.
+# The budget: rate_limit.json leaves 200 REST requests, exactly the default floor, and 960
+# GraphQL points, so the main round runs as usual. With the floor at 201 the same round starts
+# nothing, closes nothing and opens no final PR, and is green; a fleet:stop event still cancels.
+# A floor that isn't a number fails a round red, but a fleet:stop event still cancels, green.
+# after-run/ leaves 731 REST and exactly 200 GraphQL, so its rounds run. graphql-low/ has only
+# rate_limit.json: 900 REST, 199 GraphQL, so the round holds back before it reads anything else.
 # final.json: fleet/done ready, fleet/demo has open tasks, fleet/has-pr has a PR into main,
 # fleet/empty isn't ahead of main, fleet/closing is ready once #140 closes this round (the open
 # list is read again), fleet/orphan is ahead with no task naming it, fleet/reviewed has a closed
@@ -77,8 +89,22 @@ outcome() {
     shift
   done
   run env TASK_RESULT="$2" CHECKOUT_RAN="$3" AGENT_OUTCOME="$4" PAUSED="$5" RETRY_AFTER="$6" \
-    STARTED="${7:+$((FLEET_NOW - ${7:-0} * 60))}" AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b \
+    STARTED="${7:+$((FLEET_NOW - ${7:-0} * 60))}" AGENT_TIMEOUT_MINUTES=55 RUN_ID=777 SEAT=b \
     ${extra[@]+"${extra[@]}"} bash "$here/task.sh" outcome "$1"
+}
+
+# waits <issue> <run id> ...: wait_for_runs (lib.sh) on these dispatched runs. runs.json is the
+# run list, and run-<id>.json the run read by its id.
+waits() {
+  local pending="" code=0
+  echo "\$ wait_for_runs $*"
+  while (($# > 0)); do
+    pending+="$1 $2"$'\n'
+    shift 2
+  done
+  bash -c 'source "$1"; fleet_init; wait_for_runs "$2"; echo "missing=$WAIT_MISSING"' _ "$here/lib.sh" "$pending" 2>&1 || code=$?
+  echo "[exit $code]"
+  echo
 }
 
 actual=$(
@@ -86,6 +112,11 @@ actual=$(
   run env FLEET_EVENT_LABEL=fleet:stop FLEET_EVENT_ISSUE=101 bash "$here/router.sh"
   run env FLEET_EVENT_LABEL=bug FLEET_EVENT_ISSUE=101 bash "$here/router.sh"
   run env FLEET_STOP_ALL=true bash "$here/router.sh"
+  run env FLEET_BUDGET_FLOOR=201 bash "$here/router.sh"
+  run env FLEET_BUDGET_FLOOR=201 FLEET_EVENT_LABEL=fleet:stop FLEET_EVENT_ISSUE=101 bash "$here/router.sh"
+  run env FLEET_BUDGET_FLOOR=abc bash "$here/router.sh"
+  run env FLEET_BUDGET_FLOOR=-5 FLEET_EVENT_LABEL=fleet:stop FLEET_EVENT_ISSUE=101 bash "$here/router.sh"
+  run env FLEET_FIXTURES="$fx/graphql-low" bash "$here/router.sh"
   run bash "$here/task.sh" check 104
   run bash "$here/task.sh" check 105
   run bash "$here/task.sh" check 116
@@ -110,7 +141,7 @@ actual=$(
   outcome 120 skipped "" "" "" "" ""
   outcome 120 cancelled true cancelled false "" 30
   outcome 120 success false "" "" "" 1
-  outcome 120 success true failure false "" 331
+  outcome 120 success true failure false "" 55
   outcome 105 cancelled true cancelled false "" 30
   outcome 125 success true success false "" 60
   outcome "FLEET_ACT_FAIL=gh issue comment 125 *" 125 success true success false "" 60
@@ -119,6 +150,11 @@ actual=$(
   outcome 142 success true success false "" 60
   outcome 104 bogus yes ::error::x ::warning::y "" 20
   outcome SEAT=A 104 success true success false "" 20
+  waits 101 9001 150 9150 151 9151 152 9152
+  run env FLEET_FIXTURES="$fx/after-run" FLEET_AFTER_RUN=9160 bash "$here/router.sh"
+  run env FLEET_FIXTURES="$fx/after-run" FLEET_AFTER_RUN=9162 bash "$here/router.sh"
+  run env FLEET_FIXTURES="$fx/after-run" FLEET_AFTER_RUN=9163 bash "$here/router.sh"
+  run env FLEET_FIXTURES="$fx/after-run" FLEET_AFTER_RUN=91x bash "$here/router.sh"
 )
 # Paths in the output depend on where the repo is checked out. Reasons are dropped (see above).
 actual=${actual//$here/.github\/fleet}

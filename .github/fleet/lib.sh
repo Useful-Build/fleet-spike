@@ -26,6 +26,8 @@ fleet_init() {
   : "${FLEET_OWNER:?FLEET_OWNER is not set. Set the repo variable FLEET_OWNER to the login whose issues may start tasks.}"
   FLEET_MAX_JOBS=${FLEET_MAX_JOBS:-16}
   FLEET_MAX_STARTS=${FLEET_MAX_STARTS:-6}
+  # Checked by the router only, after its stop paths, so a bad value can't block a stop.
+  FLEET_BUDGET_FLOOR=${FLEET_BUDGET_FLOOR:-200}
   is_number "$FLEET_MAX_JOBS" || die "FLEET_MAX_JOBS must be a positive whole number"
   is_number "$FLEET_MAX_STARTS" || die "FLEET_MAX_STARTS must be a positive whole number"
   if [[ -n ${FLEET_FIXTURES:-} ]]; then
@@ -81,6 +83,43 @@ comment_on() {
 emit() {
   echo "$1=$2"
   if [[ -n ${GITHUB_OUTPUT:-} ]]; then echo "$1=$2" >>"$GITHUB_OUTPUT"; fi
+}
+
+# Prints both budgets this job's token has left, REST requests and GraphQL points (separate
+# buckets of 1,000 an hour each for GITHUB_TOKEN), as one line:
+#   fleet budget: REST 812/1000 resets 01:59 UTC, GraphQL 960/1000 resets 01:59 UTC (router start)
+# $1 says where in the job it was read. Sets BUDGET_REST and BUDGET_GRAPHQL to what's left, each
+# empty when it can't be read. A figure that can't be read is printed as "unreadable" on a warning
+# line, never a failure. GET /rate_limit doesn't count against the budget. The fixture is
+# rate_limit.json, and a missing one can't be read.
+# shellcheck disable=SC2034 # BUDGET_REST and BUDGET_GRAPHQL are read by the router
+budget() {
+  local raw="" key name part line="" left limit reset unreadable=false
+  BUDGET_REST="" BUDGET_GRAPHQL=""
+  if [[ -n ${FLEET_FIXTURES:-} ]]; then
+    raw=$(cat "$FLEET_FIXTURES/rate_limit.json" 2>/dev/null) || raw=""
+  else
+    raw=$(gh api rate_limit 2>/dev/null) || raw=""
+  fi
+  for key in core graphql; do
+    if [[ $key == core ]]; then name=REST; else name=GraphQL; fi
+    if part=$(jq -er --arg k "$key" '.resources[$k]
+        | select([.remaining, .limit, .reset] | all(type == "number" and . >= 0 and . == floor))
+        | "\(.remaining) \(.limit) \(.reset | strftime("%H:%M"))"' <<<"$raw" 2>/dev/null); then
+      read -r left limit reset <<<"$part"
+      line+="${line:+, }$name $left/$limit resets $reset UTC"
+      if [[ $key == core ]]; then BUDGET_REST=$left; else BUDGET_GRAPHQL=$left; fi
+    else
+      line+="${line:+, }$name unreadable"
+      unreadable=true
+    fi
+  done
+  if [[ $unreadable == true ]]; then
+    warn "fleet budget: $line ($1)"
+  else
+    echo "fleet budget: $line ($1)"
+  fi
+  return 0
 }
 
 fixture() {
@@ -184,19 +223,78 @@ api_pulls() {
       })'
 }
 
-# Runs of fleet.yml that haven't finished, as [{databaseId, displayTitle, status}].
+# Runs of fleet.yml that haven't finished, as [{databaseId, displayTitle, status}]. One request per
+# status and page of 100. The REST list takes one status per request, and gh run list would add a
+# workflow lookup to each. The fixture runs.json is the runs' workflow_runs entries, all statuses.
+# A live run object is about 13 KB, and Linux refuses a program argument of 128 KB or more, so
+# each page keeps only the three fields at once and the pages are joined on stdin, never passed as
+# an argument. This always runs inside $(...), where errexit is off, so every step has its own die.
 api_active_runs() {
+  local s all="" page
   if [[ -n ${FLEET_FIXTURES:-} ]]; then
-    fixture runs
-    return
+    all=$(fixture runs | jq -c '[.[] | {id, display_title, status}]') || die "reading the runs fixture failed"
+  else
+    for s in $ACTIVE_STATUSES; do
+      page=$(gh api --paginate --slurp \
+        "repos/$FLEET_REPO/actions/workflows/fleet.yml/runs?status=$s&exclude_pull_requests=true&per_page=100" |
+        jq -c '[.[].workflow_runs[] | {id, display_title, status}]') || die "listing $s runs failed"
+      all+=$page$'\n'
+    done
   fi
-  local s all="[]" page
-  for s in $ACTIVE_STATUSES; do
-    page=$(gh run list -R "$FLEET_REPO" --workflow fleet.yml --status "$s" --limit 1000 \
-      --json databaseId,displayTitle,status) || die "listing $s runs failed"
-    all=$(jq -n --argjson a "$all" --argjson b "$page" '$a + $b')
+  jq -s 'add | map({databaseId: .id, displayTitle: .display_title, status})' <<<"$all" ||
+    die "joining the run lists failed"
+}
+
+# The status of one run (queued, in_progress, completed, ...), or "unknown" when it can't be read
+# yet. The fixture is run-<id>.json, and a missing one is "unknown".
+api_run_status() {
+  if [[ -n ${FLEET_FIXTURES:-} ]]; then
+    if [[ -f $FLEET_FIXTURES/run-$1.json ]]; then fixture "run-$1" | jq -r .status; else echo unknown; fi
+  else
+    gh api "repos/$FLEET_REPO/actions/runs/$1" --jq .status 2>/dev/null || echo unknown
+  fi
+}
+
+# Waits until each run a round dispatched is in the active run list the next round will read
+# (api_active_runs), or has finished. The list is a search, and it has missed a run for 20
+# seconds and more after its dispatch, so finding the run by its id isn't enough. Checks up to
+# 13 times with a 5 second sleep between checks: 60 seconds of sleep, plus the time the reads
+# take (5 requests and more per check), so the wait runs longer than 60 seconds. A run list that
+# can't be read is a warning naming the tasks, and the next check tries again. Each run that never shows gets an error naming its task, and
+# WAIT_MISSING counts them. Never exits, so the caller still emits its outputs.
+#   $1 lines of "<issue> <run id>"
+WAIT_SECONDS=60
+WAIT_POLL=5
+wait_for_runs() {
+  local pending=$1 still active n id waited=0
+  WAIT_MISSING=0
+  while [[ -n $pending ]]; do
+    if ! active=$(api_active_runs); then
+      warn "listing runs failed while waiting for $(awk 'NF { printf "%s#%s", s, $1; s = " " }' <<<"$pending"), trying again"
+      active="[]"
+    fi
+    still=""
+    while read -r n id; do
+      [[ -n $n ]] || continue
+      if jq -e --argjson id "$id" 'any(.[]; .databaseId == $id)' <<<"$active" >/dev/null; then
+        echo "#$n run $id is in the run list"
+      elif [[ $(api_run_status "$id" </dev/null) == completed ]]; then
+        echo "#$n run $id has finished"
+      else
+        still+="$n $id"$'\n'
+      fi
+    done <<<"$pending"
+    pending=$still
+    if [[ -z $pending ]] || ((waited >= WAIT_SECONDS)); then break; fi
+    # The fixtures never change, so the tests don't sleep.
+    if [[ -z ${FLEET_FIXTURES:-} ]]; then sleep "$WAIT_POLL"; fi
+    waited=$((waited + WAIT_POLL))
   done
-  echo "$all"
+  while read -r n id; do
+    [[ -n $n ]] || continue
+    echo "::error::#$n: its run $id isn't in the run list after $((WAIT_SECONDS / WAIT_POLL + 1)) checks ${WAIT_POLL}s apart and hasn't finished, so the next round may start task #$n again"
+    WAIT_MISSING=$((WAIT_MISSING + 1))
+  done <<<"$pending"
 }
 
 # Open issues labelled fleet at the end of a round, after the round's own closes. Live, a fresh
@@ -466,6 +564,13 @@ classify() {
   else
     echo failed
   fi
+}
+
+# Whether a task job ran to the agent's step timeout: true when at least $2 minutes have passed
+# since $1, the job's start time in epoch seconds (a claim: anything but a number means no). The
+# agent step starts a few seconds after the job, so a step cut off at its timeout always counts.
+ran_to_timeout() {
+  [[ $1 =~ ^[0-9]{1,12}$ && $2 =~ ^[0-9]{1,4}$ ]] && ((NOW - $1 >= $2 * 60))
 }
 
 # shellcheck disable=SC2034 # RETRY_AFTER is read by the caller

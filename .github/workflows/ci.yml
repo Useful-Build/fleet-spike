@@ -1,12 +1,12 @@
 # The required check for main and fleet/** (job name "ci"). Runs on PRs and in the merge queue,
-# and on dispatch: the router starts it for a final PR it opened, which starts no run by itself.
+# and on dispatch: the router starts it for a final PR it opened, whose own run waits for approval.
 name: ci
 
 on:
   pull_request:
     branches: [main, "fleet/**"]
-    # ready_for_review: a task PR made ready after a checkpoint push (GITHUB_TOKEN, no run) still
-    # gets ci on its head commit.
+    # ready_for_review: a task PR made ready after a checkpoint push (GITHUB_TOKEN, whose run waits
+    # for approval) still gets ci on its head commit.
     types: [opened, synchronize, reopened, ready_for_review]
   merge_group:
   workflow_dispatch:
@@ -50,3 +50,5 @@ jobs:
         run: bash .github/fleet/router-test.sh
       - name: Run classifier
         run: bash .github/fleet/classify-test.sh
+      - name: Router dispatch, live path
+        run: bash .github/fleet/dispatch-test.sh

@@ -9,7 +9,7 @@
 #   task.sh pr-state <n>   the task PR's state (lib.sh pr_state), for the checkpoint. outputs pr_state
 # Outcome job (its own runner, scripts from main, never anything from the task job's runner):
 #   task.sh outcome <n>    classify the run, post its marker, apply the caps, lock the PR.
-#                          outputs outcome, failed_for_good
+#                          outputs outcome, failed_for_good, next_round
 #
 # Add --dry-run to print what would change instead. Env as in router.sh, plus BASE for branch and
 # pr-state, EXECUTION_FILE for usage, and for outcome: RUN_ID, SEAT, TASK_RESULT, CHECKOUT_RAN,
@@ -143,8 +143,11 @@ cmd_usage() {
 }
 
 cmd_pr_state() {
-  local base=${BASE:?BASE is not set}
-  emit pr_state "$(api_pulls "$n" "$base" | pr_state)"
+  local base=${BASE:?BASE is not set} state
+  # On its own line, so a failed read fails the step (and the checkpoint warns) instead of
+  # emitting an empty state.
+  state=$(api_pulls "$n" "$base" | pr_state)
+  emit pr_state "$state"
 }
 
 # Prints $1 when it's one of the other arguments, else "invalid". A claim is never printed raw:
@@ -165,7 +168,7 @@ cmd_outcome() {
   local run_id=${RUN_ID:?RUN_ID is not set} seat=${SEAT:-} started=${STARTED:-}
   local issue base pulls state stopped=false timed_out=false outcome line mk cap failed=false pr_no
   local result checkout agent paused
-  local limit=$((${AGENT_TIMEOUT_MINUTES:-330} * 60))
+  local limit=${AGENT_TIMEOUT_MINUTES:-55}
   [[ $run_id =~ ^[0-9]+$ ]] || die "RUN_ID must be a number"
 
   issue=$(api_issue "$n")
@@ -174,7 +177,7 @@ cmd_outcome() {
   state=$(pr_state <<<"$pulls")
   if has_label "$issue" fleet:stop; then stopped=true; fi
   # STARTED is the task job's start time, a claim. Anything but a number means no timeout.
-  if [[ $started =~ ^[0-9]{1,12}$ ]] && ((NOW - started >= limit)); then timed_out=true; fi
+  if ran_to_timeout "$started" "$limit"; then timed_out=true; fi
 
   result=$(known "${TASK_RESULT:-}" success failure cancelled skipped "")
   checkout=$(known "${CHECKOUT_RAN:-}" true false "")
@@ -186,6 +189,7 @@ cmd_outcome() {
     notice "#$n run $run_id didn't start the agent, so no marker"
     emit outcome none
     emit failed_for_good false
+    emit next_round false
     return
   fi
   # Exact, letter case included: GitHub's own comparisons (contains, ==) ignore case.
@@ -228,6 +232,15 @@ $line" "$(jq -r .locked <<<"$issue")" || die "posting the marker on #$n failed"
   # 3. The outputs. Nothing after this line can stop them from being set.
   emit outcome "$outcome"
   emit failed_for_good "$failed"
+  # Whether this run's next-round job starts a router round now. Only after a start (progress,
+  # failed or done), so every link in this chain of rounds counts toward the start cap and the
+  # chain ends. Not after "paused": it isn't a start, and its retry_after has no lower bound, so a
+  # false claim could restart the task at once without end. A paused task waits for the next
+  # round from another trigger. Not after "none" or "cancelled" either.
+  case $outcome in
+    progress | failed | done) emit next_round true ;;
+    *) emit next_round false ;;
+  esac
 
   # 4. Strangers can't comment on a locked PR, so nothing they write reaches the next run there.
   pr_no=$(jq -r '[.[] | select(.state == "OPEN" and .locked != true)][0].number // empty' <<<"$pulls")
@@ -243,6 +256,10 @@ case $cmd in
   branch) cmd_branch ;;
   usage) cmd_usage ;;
   pr-state) cmd_pr_state ;;
-  outcome) cmd_outcome ;;
+  outcome)
+    # Printed on every way out, a failed marker post included.
+    trap 'budget "outcome end"' EXIT
+    cmd_outcome
+    ;;
   *) die "unknown subcommand: $cmd" ;;
 esac

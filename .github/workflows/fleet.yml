@@ -1,5 +1,6 @@
 # Fleet: runs Claude Code agents as Actions jobs, one task issue per job.
-# router:      every 30 minutes and on fleet labels, starts unfinished tasks (.github/fleet/router.sh),
+# router:      about every 30 minutes (best effort), on fleet labels and when a task run that counted
+#              as a start ends (next-round). Starts unfinished tasks (.github/fleet/router.sh),
 #              and opens the final PR of a finished fleet/<topic> branch. Also "stop all".
 # router-alert: tells Telegram which tasks the router marked fleet:failed and which final PRs are
 #              ready for review.
@@ -8,6 +9,9 @@
 #              It judges nothing and writes no comment or label.
 # outcome:     its own runner. Classifies the task run, posts the marker, locks the PR, applies the caps.
 # alert:       tells Telegram when a task is marked fleet:failed.
+# next-round:  after a task run that counted as a start (progress, failed or done) posts its marker,
+#              starts a router round right away with the run's own id, so a restart doesn't wait
+#              for the cron. The cron stays the safety net.
 # How it can go wrong and what stops it: .github/fleet/FAILURES.md.
 name: fleet
 
@@ -17,8 +21,10 @@ run-name: "${{ inputs.stop_all && 'fleet stop all' || (inputs.issue && format('t
 on:
   issues:
     types: [labeled]
+  # GitHub delays scheduled runs under load, and drops some when the load is high enough. The start
+  # of every hour is a busy time, so this asks for minutes 7 and 37, not 0 and 30. Not a guarantee.
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "7,37 * * * *"
   workflow_dispatch:
     inputs:
       issue:
@@ -36,6 +42,11 @@ on:
         type: boolean
         required: false
         default: false
+      after_run:
+        description: Set by a task run's next-round job, its own run id. The router doesn't count that run as running.
+        type: string
+        required: false
+        default: ""
 
 permissions: {}
 
@@ -72,9 +83,11 @@ jobs:
           FLEET_OWNER: ${{ vars.FLEET_OWNER }}
           FLEET_MAX_JOBS: ${{ vars.FLEET_MAX_JOBS }}
           FLEET_MAX_STARTS: ${{ vars.FLEET_MAX_STARTS }}
+          FLEET_BUDGET_FLOOR: ${{ vars.FLEET_BUDGET_FLOOR }}
           FLEET_EVENT_LABEL: ${{ github.event.label.name }}
           FLEET_EVENT_ISSUE: ${{ github.event.issue.number }}
           FLEET_STOP_ALL: ${{ inputs.stop_all }}
+          FLEET_AFTER_RUN: ${{ inputs.after_run }}
         run: bash .github/fleet/router.sh
 
   router-alert:
@@ -138,7 +151,8 @@ jobs:
       github.event_name == 'workflow_dispatch' && inputs.issue && !inputs.stop_all &&
       contains(fromJSON('["a","b","c"]'), inputs.seat)
     runs-on: ubuntu-latest
-    timeout-minutes: 355
+    # The agent step stops at 55 minutes. The rest is for the steps before it and the checkpoint.
+    timeout-minutes: 80
     # The seat's environment holds FLEET_SEAT_TOKEN and FLEET_AGENTS_CONFIG_KEY, and only main may use it.
     environment: fleet-seat-${{ inputs.seat }}
     concurrency:
@@ -261,8 +275,13 @@ jobs:
           if ssh-add -l >/dev/null 2>&1; then echo "::error::an ssh key is loaded in the agent"; exit 1; fi
           # Split so this step's own script, which Actions writes to RUNNER_TEMP, doesn't match.
           pattern='PRIVATE'' KEY-----'
-          # grep exits 1 when it finds nothing, which is the result we want.
-          found=$(grep -rlI -e "$pattern" "$RUNNER_TEMP" "$HOME/.ssh" 2>/dev/null || true)
+          dirs=("$RUNNER_TEMP")
+          if [ -d "$HOME/.ssh" ]; then dirs+=("$HOME/.ssh"); fi
+          # grep exits 1 when it finds nothing, which is the result we want. Any other failure (2,
+          # a file it couldn't read) means the search didn't finish, so it fails the step.
+          rc=0
+          found=$(grep -rlI -e "$pattern" "${dirs[@]}") || rc=$?
+          if [ "$rc" -gt 1 ]; then echo "::error::the search for key files failed (grep exit $rc)"; exit 1; fi
           [ -z "$found" ] || { echo "::error::private key file left: $found"; exit 1; }
           if git config --get-regexp 'sshcommand' >/dev/null; then echo "::error::ssh command still in git config"; exit 1; fi
           echo "no key left"
@@ -272,6 +291,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh api "repos/$FLEET_REPO/issues/$ISSUE" --jq .body > "$RUNNER_TEMP/brief.md"
+
+      # The agent's GitHub access is an installation token the action mints at the start of its step,
+      # and GitHub ends it after one hour. The step stops at 55 minutes, before that, and the agent
+      # is told the stop time.
+      - name: Stop time
+        id: stop
+        if: steps.check.outputs.go == 'true'
+        run: |
+          set -euo pipefail
+          at=$(jq -rn 'now + 55 * 60 | strftime("%Y-%m-%d %H:%M")')
+          [ -n "$at" ] || { echo "::error::the stop time came out empty"; exit 1; }
+          echo "at=$at" >> "$GITHUB_OUTPUT"
 
       # Green or red is decided by the outcome job, so a usage limit or a step timeout can end green.
       # allowed_bots: runs the router dispatches have github-actions[bot] as their actor, and the
@@ -287,7 +318,7 @@ jobs:
         id: agent
         if: steps.check.outputs.go == 'true'
         continue-on-error: true
-        timeout-minutes: 330
+        timeout-minutes: 55
         uses: anthropics/claude-code-action@6070f08d2b4766348e0acded463606a7b176417b # v1
         with:
           claude_code_oauth_token: ${{ secrets.FLEET_SEAT_TOKEN }}
@@ -307,12 +338,47 @@ jobs:
             - If task/${{ steps.check.outputs.issue }} already has commits or a PR, read the "Progress" section of the PR description and carry on from there. Don't start over.
             - As soon as the branch has its first commit, push it with `git push origin task/${{ steps.check.outputs.issue }}` and open a DRAFT PR with `gh pr create --draft --base ${{ steps.base.outputs.base }} --head task/${{ steps.check.outputs.issue }}`. Title: the issue's title. Body: "Task: #${{ steps.check.outputs.issue }}" and a "Progress" section with three lines: done, next, last passing check.
             - Commit and push at least every 30 minutes and after each finished part, and update the Progress section each time with `gh pr edit`.
-            - When the brief's acceptance checks pass: commit and push everything, put the proof (the commands and their output) in the PR body, run `gh pr ready`, then enable auto-merge with a merge commit with `gh pr merge --auto --merge`, then stop.
+            - Your GitHub access (git push and gh) ends one hour after this job started, so the job stops you at ${{ steps.stop.outputs.at }} UTC. Check the time with `date -u`. By 10 minutes before that time, and before you start any wait or long command that would still be running 10 minutes before that time: commit and push everything, update the Progress section, and end your turn. That is the one time you end your turn with the work unfinished. The task then starts again with fresh access and carries on from the Progress section.
+            - When the brief's acceptance checks pass: commit and push everything, put the proof (the commands and their output) in the PR body, run `gh pr ready`, then enable auto-merge with a merge commit with `gh pr merge --auto --merge`. Your work is then finished: end your turn. Don't wait for CI, the merge queue or the merge.
+            - You run headless, and this job ends when your turn ends. Nothing wakes you again, so never end your turn to wait for anything. A wait only counts while a command of yours runs in the foreground and you stay in it. One Bash call runs for at most 10 minutes: pass `timeout` (up to 600000), keep each wait command shorter than that, and run them one after another. Don't use `run_in_background` for a wait. A wait command that outruns its timeout is stopped if it starts with `sleep`, and otherwise moved to the background, where it no longer counts as a wait.
             - Never push to main or to any fleet/* branch. Never edit anything under .github/ or test.sh: CI refuses those changes on fleet branches. Never merge by hand, and never approve a PR.
           claude_args: |
             --model claude-opus-5-5
             --permission-mode default
             --allowedTools "Read,Edit,Write,Glob,Grep,Bash,Agent,Skill,TaskCreate,TaskGet,TaskList,TaskUpdate,TodoWrite"
+
+      # At a cut-off the runner signals only the step's own shell, so bun, claude and whatever the
+      # agent was running live on until the job's cleanup, with the app token still valid. In that
+      # gap an agent git command could hold index.lock while the checkpoint commits, or its
+      # gh pr ready could land after Task PR state read draft, and the checkpoint would then push
+      # onto a ready PR. So this kills them, and their children, before anything below reads the
+      # PR or touches git. It can't fail the job. The names are the ones the runner's own cleanup
+      # listed live (run 44219163655): bun and claude, with the agent's commands under them.
+      - name: Stop what is left of the agent
+        if: always() && steps.agent.outcome != 'skipped'
+        continue-on-error: true
+        run: |
+          set +e
+          # Prints each pid read on stdin and every process under it, one per line.
+          tree() { local p; while read -r p; do echo "$p"; pgrep -P "$p" | tree; done; }
+          # The whole tree is listed before any kill, so no child moves to a new parent first.
+          pids=$(pgrep -x 'bun|claude' | tree | sort -un | paste -sd, -)
+          if [ -z "$pids" ]; then
+            echo "no agent process left"
+          else
+            echo "killing what is left of the agent:"
+            ps -o pid=,comm= -p "$pids"
+            tr , '\n' <<<"$pids" | xargs kill -KILL 2>/dev/null
+            sleep 1
+            left=$(pgrep -x 'bun|claude' | paste -sd' ' -)
+            if [ -n "$left" ]; then echo "::warning::still running after the kill: $left"; fi
+          fi
+          # A git command killed mid-write leaves its lock, and the checkpoint would fail on it.
+          if [ -e .git/index.lock ]; then
+            rm -f .git/index.lock
+            echo "removed .git/index.lock, left by a git command the kill stopped"
+          fi
+          exit 0
 
       # A claim for the outcome job. An unreadable file is a warning and "not paused", never a failure.
       - name: Usage limit
@@ -322,8 +388,9 @@ jobs:
           EXECUTION_FILE: ${{ steps.agent.outputs.execution_file }}
         run: bash "$RUNNER_TEMP/fleet/task.sh" usage "$ISSUE"
 
-      # A push with GITHUB_TOKEN starts no CI, so the checkpoint only pushes while the task has no
-      # PR or a draft one. It never lands on a ready PR.
+      # A push with GITHUB_TOKEN gets no ci without a person: GitHub creates its pull_request run in
+      # a state that needs approval. So the checkpoint only pushes while the task has no PR or a
+      # draft one, and never lands on a ready PR.
       - name: Task PR state
         id: prstate
         if: always() && steps.checkout.outcome == 'success' && steps.agent.outcome != 'skipped'
@@ -354,7 +421,10 @@ jobs:
             g -c user.name='github-actions[bot]' -c user.email='41898283+github-actions[bot]@users.noreply.github.com' \
               commit -q -m "wip: checkpoint from run $RUN_ID"
           fi
-          # The action pointed origin at its own app token, which is revoked by now.
+          # The action pointed origin at its own app token. After a normal end its cleanup revokes it.
+          # After a cut-off or a cancel that cleanup never ran, so the token is valid until it
+          # expires, but the agent that held it was killed above. Either way this push uses
+          # GITHUB_TOKEN.
           g remote set-url origin "https://github.com/$FLEET_REPO.git"
           auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
           echo "::add-mask::$auth"
@@ -387,6 +457,7 @@ jobs:
       actions: read
     outputs:
       failed_for_good: ${{ steps.outcome.outputs.failed_for_good }}
+      next_round: ${{ steps.outcome.outputs.next_round }}
     env:
       ISSUE: ${{ inputs.issue }}
     steps:
@@ -411,13 +482,47 @@ jobs:
           PAUSED: ${{ needs.task.outputs.paused }}
           RETRY_AFTER: ${{ needs.task.outputs.retry_after }}
           STARTED: ${{ needs.task.outputs.started }}
-          AGENT_TIMEOUT_MINUTES: "330"
+          # The agent step's timeout-minutes.
+          AGENT_TIMEOUT_MINUTES: "55"
         run: bash .github/fleet/task.sh outcome "$ISSUE"
       - name: Red on a failed run
         if: steps.outcome.outputs.outcome == 'failed'
         run: |
           echo "::error::task #$ISSUE run failed. See the task job's log."
           exit 1
+
+  # A round started now sees this run's marker: next_round is set only after the marker is posted
+  # and the caps applied, and only for a run that counted as a start. This run is still in
+  # progress while the round runs, so the round gets its id and leaves it out. A GITHUB_TOKEN
+  # dispatch is one of the events that does start a run.
+  # Only a task run has this job, so a router round, a stop round or an alert never starts one.
+  next-round:
+    needs: outcome
+    if: >-
+      always() && github.event_name == 'workflow_dispatch' && inputs.issue && !inputs.stop_all &&
+      needs.outcome.outputs.next_round == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Start a router round
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # return_run_details as a JSON boolean (-F), or the endpoint answers 204 with no body.
+          id=$(gh api -X POST "repos/$REPO/actions/workflows/fleet.yml/dispatches" \
+            -f ref=main -F return_run_details=true -f "inputs[after_run]=$RUN_ID" \
+            --jq '.workflow_run_id // empty')
+          # A 204, or a 200 without the id, prints nothing and exits 0. Loud, as in the router.
+          if [[ ! $id =~ ^[0-9]+$ ]]; then
+            echo "::error::the dispatch was accepted but returned no run id, so the round it started can't be found"
+            exit 1
+          fi
+          echo "started router run $id"
 
   alert:
     needs: outcome
