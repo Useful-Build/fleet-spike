@@ -229,10 +229,15 @@ $line" "$(jq -r .locked <<<"$issue")" || die "posting the marker on #$n failed"
   # 3. The outputs. Nothing after this line can stop them from being set.
   emit outcome "$outcome"
   emit failed_for_good "$failed"
-  # Whether this run's next-round job starts a router round now. Only after a posted marker that
-  # may leave work to do: not "none" (nothing started) and not "cancelled" (stopped by hand). Every
-  # other marker counts toward a cap or blocks a seat, so this chain of rounds always ends.
-  if [[ $outcome == cancelled ]]; then emit next_round false; else emit next_round true; fi
+  # Whether this run's next-round job starts a router round now. Only after a start (progress,
+  # failed or done), so every link in this chain of rounds counts toward the start cap and the
+  # chain ends. Not after "paused": it isn't a start, and its retry_after has no lower bound, so a
+  # false claim could restart the task at once without end. A paused task waits for the next
+  # round from another trigger. Not after "none" or "cancelled" either.
+  case $outcome in
+    progress | failed | done) emit next_round true ;;
+    *) emit next_round false ;;
+  esac
 
   # 4. Strangers can't comment on a locked PR, so nothing they write reaches the next run there.
   pr_no=$(jq -r '[.[] | select(.state == "OPEN" and .locked != true)][0].number // empty' <<<"$pulls")

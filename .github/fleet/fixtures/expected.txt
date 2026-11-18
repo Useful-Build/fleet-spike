@@ -342,7 +342,7 @@ task job: result=success checkout_ran=true agent=failure paused=true timed_out=f
 Run 777 on seat b: paused on a usage limit until 2026-11-25T12:00:00Z. The router starts it again after that.
 outcome=paused
 failed_for_good=false
-next_round=true
+next_round=false
 [exit 0]
 
 $ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=failure PAUSED=true RETRY_AFTER=2026-13-45T99:99:99Z STARTED=1794915600 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 121
@@ -352,7 +352,7 @@ task job: result=success checkout_ran=true agent=failure paused=true timed_out=f
 Run 777 on seat b: paused on a usage limit. The router starts it again after that.
 outcome=paused
 failed_for_good=false
-next_round=true
+next_round=false
 [exit 0]
 
 $ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=failure PAUSED=true RETRY_AFTER=2026-11-17T15:00:00Z STARTED=1794915600 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 121
@@ -361,7 +361,7 @@ task job: result=success checkout_ran=true agent=failure paused=true timed_out=f
 Run 777 on seat b: paused on a usage limit until 2026-11-17T15:00:00Z. The router starts it again after that.
 outcome=paused
 failed_for_good=false
-next_round=true
+next_round=false
 [exit 0]
 
 $ env TASK_RESULT=failure CHECKOUT_RAN= AGENT_OUTCOME= PAUSED= RETRY_AFTER= STARTED= AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 120

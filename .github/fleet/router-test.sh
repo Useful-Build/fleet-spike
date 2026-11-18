@@ -41,7 +41,8 @@
 #   141 is created first, so its failed lock comes before the slots run out.
 # after-run/: a round a task run started, with that run's id. Tasks 160 to 163 each have a run in
 # progress (9160 to 9163). 160's run just recorded progress on a; 162's just paused on b until
-# 13:00; 163's just failed for the second time in a row. Only the named run is left out.
+# 13:00 (its own run starts no round, but any round must still skip that seat); 163's just failed
+# for the second time in a row. Only the named run is left out.
 # Waiting for dispatched runs: 9001 is in runs.json; 9150 isn't, and has finished; 9151 isn't,
 # though reading it by id says it's in progress (the list lags); 9152 can't be read at all.
 # final.json: fleet/done ready, fleet/demo has open tasks, fleet/has-pr has a PR into main,
