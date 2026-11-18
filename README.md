@@ -69,6 +69,7 @@ Secrets live in environments that only `main` may use: `fleet-seat-a`, `fleet-se
 - `.github/fleet/router.sh`: what to start. `bash .github/fleet/router.sh --dry-run` prints its decisions and changes nothing.
 - `.github/fleet/router-test.sh`: runs those decisions against the fixtures and compares them with `fixtures/expected.txt`, which is written by hand from the rules.
 - `.github/fleet/classify-test.sh`: checks how the outcome job classifies a run.
+- `.github/fleet/dispatch-test.sh`: runs the router's real dispatch and wait against a stub `gh`.
 - `.github/fleet/FAILURES.md`: how restarts can go wrong and what stops each case.
 - `.github/rulesets/`: the rulesets for `main` and `fleet/**`, applied by the repo admin.
 - `.github/fleet/new-feature.sh`: starts a feature branch and its queue ruleset.

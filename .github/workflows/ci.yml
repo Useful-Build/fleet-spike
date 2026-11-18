@@ -50,3 +50,5 @@ jobs:
         run: bash .github/fleet/router-test.sh
       - name: Run classifier
         run: bash .github/fleet/classify-test.sh
+      - name: Router dispatch, live path
+        run: bash .github/fleet/dispatch-test.sh
