@@ -8,6 +8,8 @@
 #              It judges nothing and writes no comment or label.
 # outcome:     its own runner. Classifies the task run, posts the marker, locks the PR, applies the caps.
 # alert:       tells Telegram when a task is marked fleet:failed.
+# next-round:  after a task run's marker is posted, starts a router round right away with the
+#              run's own id, so a restart doesn't wait for the cron. The cron stays the safety net.
 # How it can go wrong and what stops it: .github/fleet/FAILURES.md.
 name: fleet
 
@@ -36,6 +38,11 @@ on:
         type: boolean
         required: false
         default: false
+      after_run:
+        description: Set by a task run's next-round job, its own run id. The router doesn't count that run as running.
+        type: string
+        required: false
+        default: ""
 
 permissions: {}
 
@@ -75,6 +82,7 @@ jobs:
           FLEET_EVENT_LABEL: ${{ github.event.label.name }}
           FLEET_EVENT_ISSUE: ${{ github.event.issue.number }}
           FLEET_STOP_ALL: ${{ inputs.stop_all }}
+          FLEET_AFTER_RUN: ${{ inputs.after_run }}
         run: bash .github/fleet/router.sh
 
   router-alert:
@@ -388,6 +396,7 @@ jobs:
       actions: read
     outputs:
       failed_for_good: ${{ steps.outcome.outputs.failed_for_good }}
+      next_round: ${{ steps.outcome.outputs.next_round }}
     env:
       ISSUE: ${{ inputs.issue }}
     steps:
@@ -419,6 +428,29 @@ jobs:
         run: |
           echo "::error::task #$ISSUE run failed. See the task job's log."
           exit 1
+
+  # A round started now sees this run's marker: next_round is set only after the marker is posted
+  # and the caps applied. This run is still in progress while the round runs, so the round gets
+  # its id and leaves it out. A GITHUB_TOKEN dispatch is one of the events that does start a run.
+  # Only a task run has this job, so a router round, a stop round or an alert never starts one.
+  next-round:
+    needs: outcome
+    if: >-
+      always() && github.event_name == 'workflow_dispatch' && inputs.issue && !inputs.stop_all &&
+      needs.outcome.outputs.next_round == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Start a router round
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          gh api -X POST "repos/$REPO/actions/workflows/fleet.yml/dispatches" \
+            -f ref=main -f "inputs[after_run]=$RUN_ID" --jq '"started router run \(.workflow_run_id)"'
 
   alert:
     needs: outcome

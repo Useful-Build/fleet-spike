@@ -309,6 +309,7 @@ task job: result=success checkout_ran=true agent=success paused=false timed_out=
 Run 777 on seat b: done. The PR is ready and set to merge.
 outcome=done
 failed_for_good=false
+next_round=true
   would run: gh api -X PUT repos/fixture/repo/issues/207/lock --silent
 [exit 0]
 
@@ -320,6 +321,7 @@ Run 777 on seat b: failed. See the run log.
   would run: gh issue edit 117 -R fixture/repo --add-label fleet:failed
 outcome=failed
 failed_for_good=true
+next_round=true
 [exit 0]
 
 $ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=success PAUSED=false RETRY_AFTER= STARTED=1794913200 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 115
@@ -330,6 +332,7 @@ Run 777 on seat b: progress saved, not finished. The router starts it again.
   would run: gh issue edit 115 -R fixture/repo --add-label fleet:failed
 outcome=progress
 failed_for_good=true
+next_round=true
 [exit 0]
 
 $ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=failure PAUSED=true RETRY_AFTER=2027-01-01T00:00:00Z STARTED=1794915600 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 121
@@ -339,6 +342,7 @@ task job: result=success checkout_ran=true agent=failure paused=true timed_out=f
 Run 777 on seat b: paused on a usage limit until 2026-11-25T12:00:00Z. The router starts it again after that.
 outcome=paused
 failed_for_good=false
+next_round=true
 [exit 0]
 
 $ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=failure PAUSED=true RETRY_AFTER=2026-13-45T99:99:99Z STARTED=1794915600 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 121
@@ -348,6 +352,7 @@ task job: result=success checkout_ran=true agent=failure paused=true timed_out=f
 Run 777 on seat b: paused on a usage limit. The router starts it again after that.
 outcome=paused
 failed_for_good=false
+next_round=true
 [exit 0]
 
 $ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=failure PAUSED=true RETRY_AFTER=2026-11-17T15:00:00Z STARTED=1794915600 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 121
@@ -356,6 +361,7 @@ task job: result=success checkout_ran=true agent=failure paused=true timed_out=f
 Run 777 on seat b: paused on a usage limit until 2026-11-17T15:00:00Z. The router starts it again after that.
 outcome=paused
 failed_for_good=false
+next_round=true
 [exit 0]
 
 $ env TASK_RESULT=failure CHECKOUT_RAN= AGENT_OUTCOME= PAUSED= RETRY_AFTER= STARTED= AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 120
@@ -364,6 +370,7 @@ task job: result=failure checkout_ran= agent= paused= timed_out=false pr=none st
 Run 777 on seat b: failed. See the run log.
 outcome=failed
 failed_for_good=false
+next_round=true
 [exit 0]
 
 $ env TASK_RESULT=skipped CHECKOUT_RAN= AGENT_OUTCOME= PAUSED= RETRY_AFTER= STARTED= AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 120
@@ -371,6 +378,7 @@ task job: result=skipped checkout_ran= agent= paused= timed_out=false pr=none st
 ::notice::#120 run 777 didn't start the agent, so no marker
 outcome=none
 failed_for_good=false
+next_round=false
 [exit 0]
 
 $ env TASK_RESULT=cancelled CHECKOUT_RAN=true AGENT_OUTCOME=cancelled PAUSED=false RETRY_AFTER= STARTED=1794915000 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 120
@@ -379,6 +387,7 @@ task job: result=cancelled checkout_ran=true agent=cancelled paused=false timed_
 Run 777 on seat b: progress saved, not finished. The router starts it again.
 outcome=progress
 failed_for_good=false
+next_round=true
 [exit 0]
 
 $ env TASK_RESULT=success CHECKOUT_RAN=false AGENT_OUTCOME= PAUSED= RETRY_AFTER= STARTED=1794916740 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 120
@@ -386,6 +395,7 @@ task job: result=success checkout_ran=false agent= paused= timed_out=false pr=no
 ::notice::#120 run 777 didn't start the agent, so no marker
 outcome=none
 failed_for_good=false
+next_round=false
 [exit 0]
 
 $ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=failure PAUSED=false RETRY_AFTER= STARTED=1794896940 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 120
@@ -394,6 +404,7 @@ task job: result=success checkout_ran=true agent=failure paused=false timed_out=
 Run 777 on seat b: progress saved, not finished. The router starts it again.
 outcome=progress
 failed_for_good=false
+next_round=true
 [exit 0]
 
 $ env TASK_RESULT=cancelled CHECKOUT_RAN=true AGENT_OUTCOME=cancelled PAUSED=false RETRY_AFTER= STARTED=1794915000 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b bash .github/fleet/task.sh outcome 105
@@ -402,6 +413,7 @@ task job: result=cancelled checkout_ran=true agent=cancelled paused=false timed_
 Run 777 on seat b: cancelled.
 outcome=cancelled
 failed_for_good=false
+next_round=false
   would run: gh api -X PUT repos/fixture/repo/issues/205/lock --silent
 [exit 0]
 
@@ -413,6 +425,7 @@ Run 777 on seat b: progress saved, not finished. The router starts it again.
   would run: gh api -X PUT repos/fixture/repo/issues/125/lock --silent
 outcome=progress
 failed_for_good=false
+next_round=true
 [exit 0]
 
 $ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=success PAUSED=false RETRY_AFTER= STARTED=1794913200 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b FLEET_ACT_FAIL=gh issue comment 125 * bash .github/fleet/task.sh outcome 125
@@ -435,6 +448,7 @@ Run 777 on seat b: progress saved, not finished. The router starts it again.
 ::warning::locking #125 again failed
 outcome=progress
 failed_for_good=false
+next_round=true
 [exit 0]
 
 $ env TASK_RESULT=success CHECKOUT_RAN=true AGENT_OUTCOME=success PAUSED=false RETRY_AFTER= STARTED=1794913200 AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b FLEET_ACT_FAIL=gh api -X PUT repos/fixture/repo/issues/226/lock* bash .github/fleet/task.sh outcome 126
@@ -443,6 +457,7 @@ task job: result=success checkout_ran=true agent=success paused=false timed_out=
 Run 777 on seat b: progress saved, not finished. The router starts it again.
 outcome=progress
 failed_for_good=false
+next_round=true
   would run: gh api -X PUT repos/fixture/repo/issues/226/lock --silent
   (fails)
 ::warning::locking PR #226 failed
@@ -455,6 +470,7 @@ Run 777 on seat b: done. The PR is ready and set to merge.
 ::notice::#142 reached a cap (6 starts, cap is 6), but its PR is automerge, so it isn't marked fleet:failed
 outcome=done
 failed_for_good=false
+next_round=true
   would run: gh api -X PUT repos/fixture/repo/issues/242/lock --silent
 [exit 0]
 
@@ -464,6 +480,7 @@ task job: result=invalid checkout_ran=invalid agent=invalid paused=invalid timed
 Run 777 on seat b: failed. See the run log.
 outcome=failed
 failed_for_good=false
+next_round=true
   would run: gh api -X PUT repos/fixture/repo/issues/204/lock --silent
 [exit 0]
 
@@ -479,3 +496,45 @@ $ wait_for_runs 101 9001 150 9150 151 9151 152 9152
 ::error::#152: its run 9152 isn't in the run list after 60s and hasn't finished, so the next round may start task #152 again
 missing=2
 [exit 0]
+
+$ env FLEET_FIXTURES=.github/fleet/fixtures/after-run FLEET_AFTER_RUN=9160 bash .github/fleet/router.sh
+started by task run 9160, which is ending: it isn't counted as running
+task runs active: 3, cap 25
+#160 start pr=none
+  would run: gh api -X PUT repos/fixture/repo/issues/160/lock --silent
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=160 -f inputs[seat]=c
+#161 skip-running pr=none
+#162 skip-running pr=none
+#163 skip-running pr=none
+started: 1
+would wait for the 1 started runs to show in the run list
+[exit 0]
+
+$ env FLEET_FIXTURES=.github/fleet/fixtures/after-run FLEET_AFTER_RUN=9162 bash .github/fleet/router.sh
+started by task run 9162, which is ending: it isn't counted as running
+task runs active: 3, cap 25
+#160 skip-running pr=none
+#161 skip-running pr=none
+#162 start pr=none
+  would run: gh api -X PUT repos/fixture/repo/issues/162/lock --silent
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -f inputs[issue]=162 -f inputs[seat]=c
+#163 skip-running pr=none
+started: 1
+would wait for the 1 started runs to show in the run list
+[exit 0]
+
+$ env FLEET_FIXTURES=.github/fleet/fixtures/after-run FLEET_AFTER_RUN=9163 bash .github/fleet/router.sh
+started by task run 9163, which is ending: it isn't counted as running
+task runs active: 3, cap 25
+#160 skip-running pr=none
+#161 skip-running pr=none
+#162 skip-running pr=none
+#163 failed-cap pr=none
+  would run: gh issue edit 163 -R fixture/repo --add-label fleet:failed
+started: 0
+failed_tasks=163
+[exit 0]
+
+$ env FLEET_FIXTURES=.github/fleet/fixtures/after-run FLEET_AFTER_RUN=91x bash .github/fleet/router.sh
+fleet: FLEET_AFTER_RUN must be a run id
+[exit 1]

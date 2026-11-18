@@ -7,8 +7,9 @@
 #
 # Env: FLEET_OWNER (required), FLEET_MAX_JOBS (16), FLEET_MAX_STARTS (6), FLEET_REPO (from the
 # checkout), FLEET_EVENT_LABEL and FLEET_EVENT_ISSUE (the label event that started the run, if any),
-# FLEET_STOP_ALL=true (stop every task and exit). FLEET_FIXTURES=<dir> reads fixture JSON instead
-# of the API and implies --dry-run. FLEET_NOW fixes the clock (epoch seconds). The failure list
+# FLEET_STOP_ALL=true (stop every task and exit), FLEET_AFTER_RUN (the id of the task run whose
+# next-round job started this round: that run is ending, so it isn't counted as running).
+# FLEET_FIXTURES=<dir> reads fixture JSON instead of the API and implies --dry-run. FLEET_NOW fixes the clock (epoch seconds). The failure list
 # this answers is FAILURES.md next to this file.
 set -euo pipefail
 
@@ -177,12 +178,21 @@ case ${FLEET_EVENT_LABEL:-} in
     ;;
 esac
 
+after_run=${FLEET_AFTER_RUN:-}
+if [[ -n $after_run ]]; then
+  [[ $after_run =~ ^[0-9]{1,20}$ ]] || die "FLEET_AFTER_RUN must be a run id"
+  echo "started by task run $after_run, which is ending: it isn't counted as running"
+fi
+
 issues=$(api_issues)
 started=0
 failed_tasks=""
 dispatched=""
 if [[ $(jq length <<<"$issues") != 0 ]]; then
   active=$(api_active_runs)
+  if [[ -n $after_run ]]; then
+    active=$(jq --argjson id "$after_run" 'map(select(.databaseId != $id))' <<<"$active")
+  fi
   running=$(jq '[.[] | select(.displayTitle | test("^task #[0-9]+$"))] | length' <<<"$active")
   slots=$((FLEET_MAX_JOBS - running))
   echo "task runs active: $running, cap $FLEET_MAX_JOBS"

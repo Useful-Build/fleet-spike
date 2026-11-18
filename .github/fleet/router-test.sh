@@ -39,6 +39,9 @@
 #   143 progress on c, then cancelled on a: only the progress moves the rotation, so a
 #   144 paused on b 30 minutes ago, retry_after unreadable: b is blocked for an hour, so c
 #   141 is created first, so its failed lock comes before the slots run out.
+# after-run/: a round a task run started, with that run's id. Tasks 160 to 163 each have a run in
+# progress (9160 to 9163). 160's run just recorded progress on a; 162's just paused on b until
+# 13:00; 163's just failed for the second time in a row. Only the named run is left out.
 # Waiting for dispatched runs: 9001 is in runs.json; 9150 isn't, and has finished; 9151 isn't,
 # though reading it by id says it's in progress (the list lags); 9152 can't be read at all.
 # final.json: fleet/done ready, fleet/demo has open tasks, fleet/has-pr has a PR into main,
@@ -136,6 +139,10 @@ actual=$(
   outcome 104 bogus yes ::error::x ::warning::y "" 20
   outcome SEAT=A 104 success true success false "" 20
   waits 101 9001 150 9150 151 9151 152 9152
+  run env FLEET_FIXTURES="$fx/after-run" FLEET_AFTER_RUN=9160 bash "$here/router.sh"
+  run env FLEET_FIXTURES="$fx/after-run" FLEET_AFTER_RUN=9162 bash "$here/router.sh"
+  run env FLEET_FIXTURES="$fx/after-run" FLEET_AFTER_RUN=9163 bash "$here/router.sh"
+  run env FLEET_FIXTURES="$fx/after-run" FLEET_AFTER_RUN=91x bash "$here/router.sh"
 )
 # Paths in the output depend on where the repo is checked out. Reasons are dropped (see above).
 actual=${actual//$here/.github\/fleet}

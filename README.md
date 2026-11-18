@@ -26,9 +26,11 @@ For a second repo, also:
 2. Write an issue as the owner (the login in `FLEET_OWNER`). The body is the brief: what to build, how it's accepted and the commands that prove it. Add a line `Base: fleet/<topic>`.
 3. Add the label `fleet`.
 
-The router locks the issue, then starts the task within a few seconds, and again every 30 minutes until it's done. The agent works on `task/<number>` and opens a draft PR into the base branch. When the checks in the brief pass, it marks the PR ready and turns on auto-merge, and the merge queue lands it.
+The router locks the issue, then starts the task within a few seconds. When a task run ends, its marker is posted and then its last job starts a new round right away, so a restart doesn't wait. A round also runs every 30 minutes, as the safety net. A task that never finishes can now use its 6 starts in minutes rather than hours. The agent works on `task/<number>` and opens a draft PR into the base branch. When the checks in the brief pass, it marks the PR ready and turns on auto-merge, and the merge queue lands it.
 
 A task waits while another open issue blocks it (GitHub's "blocked by" on the issue).
+
+A round closes the issue of a merged task PR and starts the tasks it was blocking. A merge that lands after its task run has ended waits for the next round: a label event, another task run ending or the 30-minute round.
 
 When every task issue for a `fleet/<topic>` branch is closed, the router opens the PR from that branch into `main`, starts `ci` on it, and Telegram says it's ready for review. A final PR you close isn't opened again until the branch gets a new commit.
 
@@ -36,7 +38,7 @@ After the final PR has merged, delete the branch's queue ruleset: `gh api -X DEL
 
 ## Stop a task
 
-- **One task:** add the label `fleet:stop`. Its job is cancelled and it doesn't restart until you remove the label. Cancelling the job in the Actions tab alone only stops that one run.
+- **One task:** add the label `fleet:stop`. Its job is cancelled and it doesn't restart until you remove the label. Cancelling the run in the Actions tab alone only stops that one run: its end starts a round, which starts the task again.
 - **Everything:** run the `fleet` workflow with `stop_all` ticked (Actions tab, or `gh workflow run fleet.yml -f stop_all=true`). It adds `fleet:stop` to every open fleet issue and cancels every task run.
 
 ## Retry a failed task
@@ -63,7 +65,7 @@ Secrets live in environments that only `main` may use: `fleet-seat-a`, `fleet-se
 
 ## How it works
 
-- `.github/workflows/fleet.yml`: the router, the agent's task job, the outcome job that judges it, and the Telegram alerts.
+- `.github/workflows/fleet.yml`: the router, the agent's task job, the outcome job that judges it, the next-round job that starts a round when a task run ends, and the Telegram alerts.
 - `.github/fleet/router.sh`: what to start. `bash .github/fleet/router.sh --dry-run` prints its decisions and changes nothing.
 - `.github/fleet/router-test.sh`: runs those decisions against the fixtures and compares them with `fixtures/expected.txt`, which is written by hand from the rules.
 - `.github/fleet/classify-test.sh`: checks how the outcome job classifies a run.

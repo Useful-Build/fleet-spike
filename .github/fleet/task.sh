@@ -9,7 +9,7 @@
 #   task.sh pr-state <n>   the task PR's state (lib.sh pr_state), for the checkpoint. outputs pr_state
 # Outcome job (its own runner, scripts from main, never anything from the task job's runner):
 #   task.sh outcome <n>    classify the run, post its marker, apply the caps, lock the PR.
-#                          outputs outcome, failed_for_good
+#                          outputs outcome, failed_for_good, next_round
 #
 # Add --dry-run to print what would change instead. Env as in router.sh, plus BASE for branch and
 # pr-state, EXECUTION_FILE for usage, and for outcome: RUN_ID, SEAT, TASK_RESULT, CHECKOUT_RAN,
@@ -186,6 +186,7 @@ cmd_outcome() {
     notice "#$n run $run_id didn't start the agent, so no marker"
     emit outcome none
     emit failed_for_good false
+    emit next_round false
     return
   fi
   # Exact, letter case included: GitHub's own comparisons (contains, ==) ignore case.
@@ -228,6 +229,10 @@ $line" "$(jq -r .locked <<<"$issue")" || die "posting the marker on #$n failed"
   # 3. The outputs. Nothing after this line can stop them from being set.
   emit outcome "$outcome"
   emit failed_for_good "$failed"
+  # Whether this run's next-round job starts a router round now. Only after a posted marker that
+  # may leave work to do: not "none" (nothing started) and not "cancelled" (stopped by hand). Every
+  # other marker counts toward a cap or blocks a seat, so this chain of rounds always ends.
+  if [[ $outcome == cancelled ]]; then emit next_round false; else emit next_round true; fi
 
   # 4. Strangers can't comment on a locked PR, so nothing they write reaches the next run there.
   pr_no=$(jq -r '[.[] | select(.state == "OPEN" and .locked != true)][0].number // empty' <<<"$pulls")
