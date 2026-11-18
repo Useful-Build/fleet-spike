@@ -19,6 +19,8 @@
 #   pending, requested), every page of each.
 # - A fleet:stop event whose run list fails ends red with an error naming the task, never as
 #   "no active run". A failed cancel, on that path or in stop all, ends the round red.
+# - A run list as big as live runs make it (12 runs of 13 KB, over the 128 KB one Linux argument
+#   may hold) is read whole: a stop cancels the runs in it and a round counts them.
 # - A run list that fails while waiting is a warning naming the task, then the run counts as
 #   missing, and the outputs are still written.
 # - Each round prints both budgets left, REST and GraphQL, at its start and its end. A figure that
@@ -70,16 +72,18 @@ case "$*" in
     # One read of the active runs asks for each status in turn, queued first. Each line of
     # $STUB/runs is "id|title|status|n": the run is listed from the n-th read on. page-size: runs
     # per page (100 unless set), and --slurp gives the pages as one array, as gh does.
-    # list-fail-from: the n-th read and every one after it fail.
+    # list-fail-from: the n-th read and every one after it fail. pad-bytes: each run carries that
+    # many bytes more, as a live run object is about 13 KB (repository, head_commit and the rest).
     status=${3#*status=}
     status=${status%%&*}
     if [[ $status == queued ]]; then echo $(($(or_default "$d/list-count" 0) + 1)) >"$d/list-count"; fi
     c=$(cat "$d/list-count")
     if [[ -f $d/list-fail-from ]] && ((c >= $(cat "$d/list-fail-from"))); then echo "stub: HTTP 502" >&2; exit 1; fi
-    or_default "$d/runs" "" | jq -Rn --arg s "$status" --argjson c "$c" --argjson p "$(or_default "$d/page-size" 100)" '
+    or_default "$d/runs" "" | jq -Rn --argjson pad "$(or_default "$d/pad-bytes" 0)" --arg s "$status" --argjson c "$c" --argjson p "$(or_default "$d/page-size" 100)" '
       [inputs | select(length > 0)
       | split("|") | select(.[2] == $s and (.[3] | tonumber) <= $c)
-      | {id: (.[0] | tonumber), display_title: .[1], status: .[2]}]
+      | {id: (.[0] | tonumber), display_title: .[1], status: .[2]}
+      | if $pad > 0 then .pad = ("x" * $pad) else . end]
       | length as $n
       | [range(0; ([$n, 1] | max); $p) as $i | {total_count: $n, workflow_runs: .[$i:$i + $p]}]'
     ;;
@@ -124,6 +128,20 @@ case "$*" in
 esac
 EOF
 chmod +x "$tmp/bin/gh" "$tmp/bin/sleep"
+# Linux refuses to start a program with any one argument of 131072 bytes or more (MAX_ARG_STRLEN,
+# "Argument list too long", exit 126). macOS doesn't, so this jq does the same on a Mac. On Linux
+# the kernel refuses first, so it changes nothing there.
+REAL_JQ=$(command -v jq)
+export REAL_JQ
+cat >"$tmp/bin/jq" <<'EOF'
+#!/usr/bin/env bash
+export LC_ALL=C
+for a in "$@"; do
+  if ((${#a} >= 131072)); then echo "jq: Argument list too long (${#a} bytes)" >&2; exit 126; fi
+done
+exec "$REAL_JQ" "$@"
+EOF
+chmod +x "$tmp/bin/jq"
 
 # issue <number> [extra label]: an open, locked fleet issue by the owner, with no Base line.
 issue() {
@@ -500,6 +518,45 @@ want_no_call "inputs[issue]=322"
 want_call "$(dispatch_call 321 a)"
 want_out "#321 run 6021 is in the run list"
 want_sleeps 1
+want_exit 0
+done_case
+
+# Live run objects are about 13 KB each. big_runs: 12 in_progress runs 9100 to 9111 of tasks #330
+# to #341, padded to 13,000 bytes each, about 157 KB together, over the 128 KB a Linux argument
+# may hold. #331's run is 9101.
+big_runs() {
+  local i
+  for i in $(seq 0 11); do echo "$((9100 + i))|task #$((330 + i))|in_progress|1"; done >"$STUB/runs"
+  echo 13000 >"$STUB/pad-bytes"
+}
+
+# fleet:stop on #331 with 12 runs active: its one run, 9101, is cancelled, green.
+scenario big-runs-stop
+issue 331 fleet:stop | jq -s . >"$STUB/issues.json"
+big_runs
+route FLEET_EVENT_LABEL=fleet:stop FLEET_EVENT_ISSUE=331
+want_call "api -X POST repos/fixture/repo/actions/runs/9101/cancel --silent"
+want_exit 0
+done_case
+
+# Stop all with 12 runs active: every one of the 12 is cancelled, green.
+scenario big-runs-stop-all
+issue 331 | jq -s . >"$STUB/issues.json"
+big_runs
+route FLEET_STOP_ALL=true
+for i in $(seq 0 11); do want_call "api -X POST repos/fixture/repo/actions/runs/$((9100 + i))/cancel --silent"; done
+want_exit 0
+done_case
+
+# A round with 12 runs active: 12 of 16 slots taken, #331 is running so it isn't started, and no
+# other issue is open, so nothing is dispatched, green.
+scenario big-runs-round
+issue 331 | jq -s . >"$STUB/issues.json"
+big_runs
+route
+want_out "task runs active: 12, cap 16"
+want_out "#331 skip-running pr=none: a task #331 run is queued or running"
+want_no_call "fleet.yml/dispatches"
 want_exit 0
 done_case
 
