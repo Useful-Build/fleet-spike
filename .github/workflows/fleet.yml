@@ -1,5 +1,6 @@
 # Fleet: runs Claude Code agents as Actions jobs, one task issue per job.
-# router:      every 30 minutes and on fleet labels, starts unfinished tasks (.github/fleet/router.sh),
+# router:      about every 30 minutes (best effort), on fleet labels and when a task run that counted
+#              as a start ends (next-round). Starts unfinished tasks (.github/fleet/router.sh),
 #              and opens the final PR of a finished fleet/<topic> branch. Also "stop all".
 # router-alert: tells Telegram which tasks the router marked fleet:failed and which final PRs are
 #              ready for review.
@@ -8,8 +9,9 @@
 #              It judges nothing and writes no comment or label.
 # outcome:     its own runner. Classifies the task run, posts the marker, locks the PR, applies the caps.
 # alert:       tells Telegram when a task is marked fleet:failed.
-# next-round:  after a task run's marker is posted, starts a router round right away with the
-#              run's own id, so a restart doesn't wait for the cron. The cron stays the safety net.
+# next-round:  after a task run that counted as a start (progress, failed or done) posts its marker,
+#              starts a router round right away with the run's own id, so a restart doesn't wait
+#              for the cron. The cron stays the safety net.
 # How it can go wrong and what stops it: .github/fleet/FAILURES.md.
 name: fleet
 
@@ -318,7 +320,7 @@ jobs:
             - As soon as the branch has its first commit, push it with `git push origin task/${{ steps.check.outputs.issue }}` and open a DRAFT PR with `gh pr create --draft --base ${{ steps.base.outputs.base }} --head task/${{ steps.check.outputs.issue }}`. Title: the issue's title. Body: "Task: #${{ steps.check.outputs.issue }}" and a "Progress" section with three lines: done, next, last passing check.
             - Commit and push at least every 30 minutes and after each finished part, and update the Progress section each time with `gh pr edit`.
             - When the brief's acceptance checks pass: commit and push everything, put the proof (the commands and their output) in the PR body, run `gh pr ready`, then enable auto-merge with a merge commit with `gh pr merge --auto --merge`. Your work is then finished: end your turn. Don't wait for CI, the merge queue or the merge.
-            - You run headless, and this job ends when your turn ends. Nothing wakes you again, so never end your turn to wait for anything. A wait only counts while a command of yours runs in the foreground and you stay in it. One Bash call runs for at most 10 minutes: pass `timeout` (up to 600000), keep each wait command shorter than that, and run them one after another. Don't use `run_in_background` for a wait. A `sleep` that outruns its timeout is stopped, not finished.
+            - You run headless, and this job ends when your turn ends. Nothing wakes you again, so never end your turn to wait for anything. A wait only counts while a command of yours runs in the foreground and you stay in it. One Bash call runs for at most 10 minutes: pass `timeout` (up to 600000), keep each wait command shorter than that, and run them one after another. Don't use `run_in_background` for a wait. A wait command that outruns its timeout is stopped if it starts with `sleep`, and otherwise moved to the background, where it no longer counts as a wait.
             - Never push to main or to any fleet/* branch. Never edit anything under .github/ or test.sh: CI refuses those changes on fleet branches. Never merge by hand, and never approve a PR.
           claude_args: |
             --model claude-opus-5-5
@@ -333,8 +335,9 @@ jobs:
           EXECUTION_FILE: ${{ steps.agent.outputs.execution_file }}
         run: bash "$RUNNER_TEMP/fleet/task.sh" usage "$ISSUE"
 
-      # A push with GITHUB_TOKEN starts no CI, so the checkpoint only pushes while the task has no
-      # PR or a draft one. It never lands on a ready PR.
+      # A push with GITHUB_TOKEN gets no ci without a person: GitHub creates its pull_request run in
+      # a state that needs approval. So the checkpoint only pushes while the task has no PR or a
+      # draft one, and never lands on a ready PR.
       - name: Task PR state
         id: prstate
         if: always() && steps.checkout.outcome == 'success' && steps.agent.outcome != 'skipped'
@@ -432,7 +435,7 @@ jobs:
           exit 1
 
   # A round started now sees this run's marker: next_round is set only after the marker is posted
-  # and the caps applied. This run is still in progress while the round runs, so the round gets
+  # and the caps applied, and only for a run that counted as a start. This run is still in progress while the round runs, so the round gets
   # its id and leaves it out. A GITHUB_TOKEN dispatch is one of the events that does start a run.
   # Only a task run has this job, so a router round, a stop round or an alert never starts one.
   next-round:

@@ -5,9 +5,10 @@
 #   new-feature.sh <topic>             create both
 #   new-feature.sh <topic> --dry-run   print the two requests it would send, change nothing
 #
-# Why a ruleset per branch: GitHub refuses a merge_queue rule on a ruleset whose pattern has a
-# wildcard, so the "fleet branches" ruleset (.github/rulesets/fleet.json) covers fleet/** without
-# one, and each feature branch gets its own "fleet/<topic> queue" ruleset with only the queue.
+# Why a ruleset per branch: GitHub refused a merge_queue rule on the fleet/** ruleset when we tried
+# (its docs say the same for branch protection rules with a wildcard). So the "fleet branches"
+# ruleset (.github/rulesets/fleet.json) covers fleet/** without one, and each feature branch gets
+# its own "fleet/<topic> queue" ruleset with only the queue.
 # The owner's admin bypass on fleet/** is what lets this create the branch.
 #
 # Env: FLEET_REPO (owner/name; default: the repo of the current directory). Needs gh logged in as

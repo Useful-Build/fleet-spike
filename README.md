@@ -6,7 +6,7 @@ A test bed for running Claude Code agents as GitHub Actions jobs. Each task is a
 
 Once, by an admin, before the first task starts:
 
-1. **Rulesets:** apply `.github/rulesets/main.json`, then `.github/rulesets/fleet.json` (Settings, Rules, Rulesets, Import a ruleset). Both must be on before the first task is started: the seat environments only protect anything while `main` is protected. `fleet.json` has no merge queue: GitHub refuses one on a wildcard pattern, so each feature branch gets its own queue ruleset when you start it (below).
+1. **Rulesets:** apply `.github/rulesets/main.json`, then `.github/rulesets/fleet.json` (Settings, Rules, Rulesets, Import a ruleset). Both must be on before the first task is started: the seat environments only protect anything while `main` is protected. `fleet.json` has no merge queue: GitHub refused one on the `fleet/**` ruleset when we tried (its docs say the same for branch protection rules with a wildcard), so each feature branch gets its own queue ruleset when you start it (below).
 2. **Labels:** create `fleet`, `fleet:stop` and `fleet:failed`. The router doesn't create them.
 3. **Variables:** set the repo variables `FLEET_OWNER`, `FLEET_MAX_JOBS` and `FLEET_MAX_STARTS` (see below).
 4. **Environments:** create `fleet-seat-a`, `fleet-seat-b` and `fleet-seat-c` (each holds `FLEET_SEAT_TOKEN` and `FLEET_AGENTS_CONFIG_KEY`) and `fleet-alert` (holds `FLEET_TELEGRAM_BOT_TOKEN` and `FLEET_TELEGRAM_CHAT_ID`). Limit each to the branch `main`.
@@ -26,19 +26,19 @@ For a second repo, also:
 2. Write an issue as the owner (the login in `FLEET_OWNER`). The body is the brief: what to build, how it's accepted and the commands that prove it. Add a line `Base: fleet/<topic>`.
 3. Add the label `fleet`.
 
-The router locks the issue, then starts the task within a few seconds. When a task run ends, its marker is posted and then its last job starts a new round right away, so a restart doesn't wait. A round also runs every 30 minutes, as the safety net. A task that never finishes can now use its 6 starts in minutes rather than hours. The agent works on `task/<number>` and opens a draft PR into the base branch. When the checks in the brief pass, it marks the PR ready and turns on auto-merge, and the merge queue lands it.
+The router locks the issue, then starts the task within a few seconds. When a task run that counted as a start ends (`progress`, `failed` or `done`), its marker is posted and then its last job starts a new round right away, so its restart doesn't wait. A run paused on a usage limit waits for the next round from another trigger. A round is also scheduled at minutes 7 and 37 of each hour, as the safety net, but GitHub delays scheduled runs under load and may drop some, so that isn't a promise. A task that never finishes can use all its starts (`FLEET_MAX_STARTS`) in minutes. The agent works on `task/<number>` and opens a draft PR into the base branch. When the checks in the brief pass, it marks the PR ready and turns on auto-merge, and the merge queue lands it.
 
 A task waits while another open issue blocks it (GitHub's "blocked by" on the issue).
 
-A round closes the issue of a merged task PR and starts the tasks it was blocking. A merge that lands after its task run has ended waits for the next round: a label event, another task run ending or the 30-minute round.
+A round closes the issue of a merged task PR and starts the tasks it was blocking. A merge that lands after its task run has ended waits for the next round: a label event, another task run ending or the scheduled round.
 
 When every task issue for a `fleet/<topic>` branch is closed, the router opens the PR from that branch into `main`, starts `ci` on it, and Telegram says it's ready for review. A final PR you close isn't opened again until the branch gets a new commit.
 
-After the final PR has merged, delete the branch's queue ruleset: `gh api -X DELETE repos/<owner>/<repo>/rulesets/<id>`, with the id from `gh api repos/<owner>/<repo>/rulesets --jq '.[] | select(.name == "fleet/<topic> queue") | .id'`.
+After the final PR has merged, delete the branch's queue ruleset: `gh api -X DELETE repos/<owner>/<repo>/rulesets/<id>`, with the id from `gh api --paginate repos/<owner>/<repo>/rulesets --jq '.[] | select(.name == "fleet/<topic> queue") | .id'`.
 
 ## Stop a task
 
-- **One task:** add the label `fleet:stop`. Its job is cancelled and it doesn't restart until you remove the label. Cancelling the run in the Actions tab alone only stops that one run: its end starts a round, which starts the task again.
+- **One task:** add the label `fleet:stop` first. Its job is cancelled and it doesn't restart until you remove the label. Cancelling the run in the Actions tab without the label counts as progress: its end starts a round, which starts the task again within seconds and uses one of its starts.
 - **Everything:** run the `fleet` workflow with `stop_all` ticked (Actions tab, or `gh workflow run fleet.yml -f stop_all=true`). It adds `fleet:stop` to every open fleet issue and cancels every task run.
 
 ## Retry a failed task
