@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Tests classify (lib.sh), the outcome job's verdict on a task run, against a table written by hand
-# from the rules. No network, no fixtures.
+# from the rules, and the step timeout below. No network, no fixtures. Reads fleet.yml only to check
+# its timeout values.
 #
 # Columns: task job result | checkout ran | agent step | paused claim | timed out | PR state |
 # fleet:stop on the issue | outcome. "-" stands for an empty value (a task job that died without
@@ -67,6 +68,52 @@ while read -r result checkout agent paused timed state stopped want; do
     fails=$((fails + 1))
   fi
 done <<<"$table"
+
+# The step timeout. The agent step stops at 55 minutes (its GitHub access ends after an hour), and
+# the outcome job gets the same number as AGENT_TIMEOUT_MINUTES. A run counts as cut off at its
+# timeout when at least that many minutes passed since the task job started (ran_to_timeout in
+# lib.sh), and a failed agent step that was cut off made progress.
+# Columns: minutes since the job started ("-" for no start time, "x" for one that isn't a number) |
+# timeout minutes | agent step | outcome. Task job success, checkout ran, no pause claim, draft PR,
+# no fleet:stop.
+timeouts='
+55 55 failure progress
+56 55 failure progress
+330 55 failure progress
+54 55 failure failed
+0 55 failure failed
+- 55 failure failed
+x 55 failure failed
+55 55 success progress
+54 55 success progress
+'
+NOW=1794916800
+while read -r minutes limit agent want; do
+  [[ -n $minutes ]] || continue
+  case $minutes in
+    -) started="" ;;
+    x) started="12:00" ;;
+    *) started=$((NOW - minutes * 60)) ;;
+  esac
+  timed=false
+  if ran_to_timeout "$started" "$limit"; then timed=true; fi
+  got=$(classify success true "$agent" false "$timed" draft false)
+  count=$((count + 1))
+  if [[ $got != "$want" ]]; then
+    echo "FAIL: started $minutes minutes ago, timeout $limit, agent $agent: want $want, got $got"
+    fails=$((fails + 1))
+  fi
+done <<<"$timeouts"
+
+# The table above is for 55: the workflow must use that number in both places.
+wf="$here/../workflows/fleet.yml"
+step=$(awk '/^      - name: Agent$/ { on = 1 } on && /timeout-minutes:/ { print $2; exit }' "$wf")
+outcome=$(awk -F'"' '/AGENT_TIMEOUT_MINUTES:/ { print $2; exit }' "$wf")
+count=$((count + 1))
+if [[ $step != 55 || $outcome != 55 ]]; then
+  echo "FAIL: fleet.yml has the agent step's timeout-minutes '$step' and AGENT_TIMEOUT_MINUTES '$outcome', want 55 and 55"
+  fails=$((fails + 1))
+fi
 
 if ((fails > 0)); then
   echo "classify-test: $fails of $count cases wrong" >&2

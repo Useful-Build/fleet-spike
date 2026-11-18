@@ -45,9 +45,12 @@
 # for the second time in a row. Only the named run is left out.
 # Waiting for dispatched runs: 9001 is in runs.json; 9150 isn't, and has finished; 9151 isn't,
 # though reading it by id says it's in progress (the list lags); 9152 can't be read at all.
-# The budget: rate_limit.json leaves 200 requests, exactly the default floor, so the main round
-# runs as usual. With the floor at 201 the same round starts nothing, closes nothing and opens no
-# final PR, and is green; a fleet:stop event still cancels. after-run/ leaves 731, above the floor.
+# The budget: rate_limit.json leaves 200 REST requests, exactly the default floor, and 960
+# GraphQL points, so the main round runs as usual. With the floor at 201 the same round starts
+# nothing, closes nothing and opens no final PR, and is green; a fleet:stop event still cancels.
+# A floor that isn't a number fails a round red, but a fleet:stop event still cancels, green.
+# after-run/ leaves 731 REST and exactly 200 GraphQL, so its rounds run. graphql-low/ has only
+# rate_limit.json: 900 REST, 199 GraphQL, so the round holds back before it reads anything else.
 # final.json: fleet/done ready, fleet/demo has open tasks, fleet/has-pr has a PR into main,
 # fleet/empty isn't ahead of main, fleet/closing is ready once #140 closes this round (the open
 # list is read again), fleet/orphan is ahead with no task naming it, fleet/reviewed has a closed
@@ -86,7 +89,7 @@ outcome() {
     shift
   done
   run env TASK_RESULT="$2" CHECKOUT_RAN="$3" AGENT_OUTCOME="$4" PAUSED="$5" RETRY_AFTER="$6" \
-    STARTED="${7:+$((FLEET_NOW - ${7:-0} * 60))}" AGENT_TIMEOUT_MINUTES=330 RUN_ID=777 SEAT=b \
+    STARTED="${7:+$((FLEET_NOW - ${7:-0} * 60))}" AGENT_TIMEOUT_MINUTES=55 RUN_ID=777 SEAT=b \
     ${extra[@]+"${extra[@]}"} bash "$here/task.sh" outcome "$1"
 }
 
@@ -111,7 +114,9 @@ actual=$(
   run env FLEET_STOP_ALL=true bash "$here/router.sh"
   run env FLEET_BUDGET_FLOOR=201 bash "$here/router.sh"
   run env FLEET_BUDGET_FLOOR=201 FLEET_EVENT_LABEL=fleet:stop FLEET_EVENT_ISSUE=101 bash "$here/router.sh"
-  run env FLEET_BUDGET_FLOOR=0 bash "$here/router.sh"
+  run env FLEET_BUDGET_FLOOR=abc bash "$here/router.sh"
+  run env FLEET_BUDGET_FLOOR=-5 FLEET_EVENT_LABEL=fleet:stop FLEET_EVENT_ISSUE=101 bash "$here/router.sh"
+  run env FLEET_FIXTURES="$fx/graphql-low" bash "$here/router.sh"
   run bash "$here/task.sh" check 104
   run bash "$here/task.sh" check 105
   run bash "$here/task.sh" check 116
@@ -136,7 +141,7 @@ actual=$(
   outcome 120 skipped "" "" "" "" ""
   outcome 120 cancelled true cancelled false "" 30
   outcome 120 success false "" "" "" 1
-  outcome 120 success true failure false "" 331
+  outcome 120 success true failure false "" 55
   outcome 105 cancelled true cancelled false "" 30
   outcome 125 success true success false "" 60
   outcome "FLEET_ACT_FAIL=gh issue comment 125 *" 125 success true success false "" 60

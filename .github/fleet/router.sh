@@ -6,7 +6,8 @@
 #   router.sh --dry-run   print every decision and the commands it would run, change nothing
 #
 # Env: FLEET_OWNER (required), FLEET_MAX_JOBS (16), FLEET_MAX_STARTS (6), FLEET_BUDGET_FLOOR (200:
-# a round that starts with fewer REST requests left starts nothing), FLEET_REPO (from the
+# a round that starts with fewer REST requests or GraphQL points left starts nothing; 0 turns
+# this off), FLEET_REPO (from the
 # checkout), FLEET_EVENT_LABEL and FLEET_EVENT_ISSUE (the label event that started the run, if
 # any), FLEET_STOP_ALL=true (stop every task and exit), FLEET_AFTER_RUN (the id of the task run
 # whose next-round job started this round: that run is ending, so it isn't counted as running).
@@ -79,14 +80,20 @@ count_naming() {
 # Checks one fleet/<topic> branch and opens its final PR when it's ready. Runs in a subshell:
 # writes "opened", the PR URL and "ci-failed" to files in $tmp for the caller.
 final_pr_for() {
-  local b=$1 sha=$2 open=$3 closed=$4 ahead merged body url
+  local b=$1 sha=$2 open=$3 closed=$4 ahead naming prs heads merged body url
+  # Each read is assigned on its own line, so a failed read stops this branch's check. Inside
+  # [[ ]], (( )) or an if, it would read as an empty answer.
   ahead=$(api_ahead_of_main "$b")
   if ((ahead == 0)); then echo "$b final PR: not ahead of main"; return; fi
-  if (($(count_naming "$b" <<<"$open") > 0)); then echo "$b final PR: not ready, an open task names it"; return; fi
-  if (($(count_naming "$b" <<<"$closed") == 0)); then echo "$b final PR: not ready, no closed task names it"; return; fi
-  if [[ $(api_prs_to_main "$b" | jq length) != 0 ]]; then echo "$b final PR: a PR into main is already open"; return; fi
+  naming=$(count_naming "$b" <<<"$open")
+  if ((naming > 0)); then echo "$b final PR: not ready, an open task names it"; return; fi
+  naming=$(count_naming "$b" <<<"$closed")
+  if ((naming == 0)); then echo "$b final PR: not ready, no closed task names it"; return; fi
+  prs=$(api_prs_to_main "$b" | jq length)
+  if [[ $prs != 0 ]]; then echo "$b final PR: a PR into main is already open"; return; fi
   # The owner closed a final PR at this very commit: don't reopen it until the branch moves on.
-  if api_closed_heads_to_main "$b" | jq -e --arg s "$sha" 'index($s) != null' >/dev/null; then
+  heads=$(api_closed_heads_to_main "$b")
+  if jq -e --arg s "$sha" 'index($s) != null' <<<"$heads" >/dev/null; then
     echo "$b final PR: a closed PR into main has this head, not reopened"
     return
   fi
@@ -172,7 +179,10 @@ case ${FLEET_EVENT_LABEL:-} in
   fleet:stop)
     n=${FLEET_EVENT_ISSUE:-}
     is_number "$n" || die "fleet:stop event without an issue number"
-    cancel_task_runs "$n" "$(api_active_runs)"
+    # On its own line: a failed substitution passed as an argument wouldn't stop the round, and an
+    # empty list would read as "no active run".
+    active=$(api_active_runs) || die "#$n stop: listing the active runs failed, so its run wasn't cancelled"
+    cancel_task_runs "$n" "$active"
     if ((failures > 0)); then die "$failures changes failed"; fi
     exit 0
     ;;
@@ -188,11 +198,22 @@ if [[ -n $after_run ]]; then
   echo "started by task run $after_run, which is ending: it isn't counted as running"
 fi
 
-# Every job's GITHUB_TOKEN in this repo shares one budget, and a round can spend a lot of it. Below
-# the floor the round leaves it to the outcome jobs, which must post their markers for the caps to
-# count. The stop paths above always run. A budget that can't be read doesn't hold a round back.
-if [[ -n $BUDGET_LEFT ]] && ((BUDGET_LEFT < FLEET_BUDGET_FLOOR)); then
-  warn "fleet budget: $BUDGET_LEFT requests left, below the floor of $FLEET_BUDGET_FLOOR. This round starts no task and opens no final PR, to leave room for the outcome jobs' markers."
+# Every job's GITHUB_TOKEN in this repo shares two budgets, REST and GraphQL, and a round can spend
+# a lot of both. The marker post goes through both. Below the floor in either, the round leaves
+# them to the outcome jobs, which must post their markers for the caps to count. The stop paths
+# above always run, whatever the budget or the floor's value. A figure that can't be read doesn't
+# hold a round back. A floor of 0 turns the guard off.
+[[ $FLEET_BUDGET_FLOOR =~ ^(0|[1-9][0-9]{0,9})$ ]] ||
+  die "FLEET_BUDGET_FLOOR must be 0 (no floor) or a positive whole number. Only the stop rounds run until it's fixed."
+low=""
+if [[ -n $BUDGET_REST ]] && ((BUDGET_REST < FLEET_BUDGET_FLOOR)); then
+  low="$BUDGET_REST REST requests"
+fi
+if [[ -n $BUDGET_GRAPHQL ]] && ((BUDGET_GRAPHQL < FLEET_BUDGET_FLOOR)); then
+  low="${low:+$low and }$BUDGET_GRAPHQL GraphQL points"
+fi
+if [[ -n $low ]]; then
+  warn "fleet budget: $low left, below the floor of $FLEET_BUDGET_FLOOR. This round starts, closes, labels and cancels nothing and opens no final PR, to leave room for the outcome jobs' markers."
   exit 0
 fi
 

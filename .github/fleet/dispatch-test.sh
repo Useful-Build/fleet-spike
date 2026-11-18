@@ -11,18 +11,23 @@
 # - A dispatch with no numeric run id is an error naming the task, and the round ends red.
 # - A failed dispatch is counted, the loop carries on, the runs already started are still waited
 #   for, and failed_tasks and final_prs are still written before the round ends red.
-# - A run that isn't in the run list after 60 seconds, and hasn't finished, is an error naming the
-#   task, and the round ends red. The wait polls every 5 seconds: 13 reads, 12 sleeps.
+# - A run that isn't in the run list after 13 checks 5 seconds apart, and hasn't finished, is an
+#   error naming the task, and the round ends red: 13 reads, 12 sleeps.
 # - A run that has already finished ends its wait at once.
 # - A task that got fleet:stop after the round read the issues isn't started.
 # - The active runs are read with one REST request per status (queued, in_progress, waiting,
-#   pending, requested).
+#   pending, requested), every page of each.
+# - A fleet:stop event whose run list fails ends red with an error naming the task, never as
+#   "no active run". A failed cancel, on that path or in stop all, ends the round red.
 # - A run list that fails while waiting is a warning naming the task, then the run counts as
 #   missing, and the outputs are still written.
-# - Each round prints the budget left at its start and its end. A budget that can't be read is a
-#   warning, and the round goes on as if above the floor.
-# - Below FLEET_BUDGET_FLOOR (200 unless set) a round starts nothing, opens no final PR and is
-#   green. At or above it, the round runs as usual. Stop all runs whatever the budget.
+# - Each round prints both budgets left, REST and GraphQL, at its start and its end. A figure that
+#   can't be read (missing, or not a whole number) is a warning, and the round goes on as if it
+#   were above the floor.
+# - Below FLEET_BUDGET_FLOOR (200 unless set) in either budget, 0 left included, a round starts
+#   nothing, opens no final PR and is green. At or above it, the round runs as usual. A floor of 0
+#   turns this off. Stop all runs whatever the budget, and whatever the floor's value; a floor
+#   that isn't 0 or a positive whole number fails any other round red before it reads anything.
 # Seats: no markers, so the seat is "abc"[issue number mod 3].
 set -euo pipefail
 
@@ -43,6 +48,11 @@ set -euo pipefail
 d=$STUB R=fixture/repo
 echo "$*" >>"$d/calls.log"
 or_default() { if [[ -f $1 ]]; then cat "$1"; else echo "$2"; fi; }
+# budget_json <REST left> <GraphQL left>: a rate_limit answer, both resetting at 12:20 UTC.
+budget_json() {
+  echo "{\"resources\": {\"core\": {\"limit\": 1000, \"remaining\": $1, \"reset\": 1794918000},"
+  echo " \"graphql\": {\"limit\": 1000, \"remaining\": $2, \"reset\": 1794918000}}}"
+}
 unexpected() { echo "stub gh: unexpected call: $*" >&2; exit 97; }
 case "$1 ${2:-}" in
   "issue edit") exit 0 ;;
@@ -52,23 +62,26 @@ case "$1 ${2:-}" in
 esac
 case "$*" in
   rate_limit)
-    # rate-limit-fail: the read fails. rate_limit.json: the answer, else 900 of 1000 left.
+    # rate-limit-fail: the read fails. rate_limit.json: the answer, else 900 of 1000 left in both.
     if [[ -f $d/rate-limit-fail ]]; then echo "stub: HTTP 500" >&2; exit 1; fi
-    or_default "$d/rate_limit.json" '{"resources": {"core": {"limit": 1000, "used": 100, "remaining": 900, "reset": 1794918000}}}'
+    or_default "$d/rate_limit.json" "$(budget_json 900 900)"
     ;;
   "--paginate --slurp repos/$R/actions/workflows/fleet.yml/runs?status="*"&exclude_pull_requests=true&per_page=100")
-    # One read of the active runs asks for each status in turn, queued first, one page each. Each
-    # line of $STUB/runs is "id|title|status|n": the run is listed from the n-th read on.
+    # One read of the active runs asks for each status in turn, queued first. Each line of
+    # $STUB/runs is "id|title|status|n": the run is listed from the n-th read on. page-size: runs
+    # per page (100 unless set), and --slurp gives the pages as one array, as gh does.
     # list-fail-from: the n-th read and every one after it fail.
     status=${3#*status=}
     status=${status%%&*}
     if [[ $status == queued ]]; then echo $(($(or_default "$d/list-count" 0) + 1)) >"$d/list-count"; fi
     c=$(cat "$d/list-count")
     if [[ -f $d/list-fail-from ]] && ((c >= $(cat "$d/list-fail-from"))); then echo "stub: HTTP 502" >&2; exit 1; fi
-    or_default "$d/runs" "" | jq -Rn --arg s "$status" --argjson c "$c" '[inputs | select(length > 0)
+    or_default "$d/runs" "" | jq -Rn --arg s "$status" --argjson c "$c" --argjson p "$(or_default "$d/page-size" 100)" '
+      [inputs | select(length > 0)
       | split("|") | select(.[2] == $s and (.[3] | tonumber) <= $c)
       | {id: (.[0] | tonumber), display_title: .[1], status: .[2]}]
-      | [{total_count: length, workflow_runs: .}]'
+      | length as $n
+      | [range(0; ([$n, 1] | max); $p) as $i | {total_count: $n, workflow_runs: .[$i:$i + $p]}]'
     ;;
   "--paginate --slurp repos/$R/issues?state=open&labels=fleet&per_page=100") printf '[%s]\n' "$(cat "$d/issues.json")" ;;
   "--paginate --slurp repos/$R/issues?state=closed&labels=fleet&per_page=100") printf '[%s]\n' "$(or_default "$d/closed.json" '[]')" ;;
@@ -80,7 +93,10 @@ case "$*" in
     printf '[%s]\n' "$(or_default "$d/comments-${n%%/*}.json" '[]')"
     ;;
   "-X PUT repos/$R/issues/"*"/lock --silent") ;;
-  "-X POST repos/$R/actions/runs/"*"/cancel --silent") ;;
+  "-X POST repos/$R/actions/runs/"*"/cancel --silent")
+    # cancel-fail: every cancel fails.
+    if [[ -f $d/cancel-fail ]]; then echo "stub: HTTP 500" >&2; exit 1; fi
+    ;;
   "-X POST repos/$R/actions/workflows/ci.yml/dispatches -f ref="*" --silent") ;;
   "-X POST repos/$R/actions/workflows/fleet.yml/dispatches "*)
     n="" details=false prev=""
@@ -152,6 +168,11 @@ want_sleeps() {
   [[ $n == "$1" ]] || fail "$n sleeps, want $1"
 }
 want_output() { grep -qxF -- "$1" "$STUB/output" 2>/dev/null || fail "no step output: $1"; }
+budget_json() {
+  echo "{\"resources\": {\"core\": {\"limit\": 1000, \"remaining\": $1, \"reset\": 1794918000},"
+  echo " \"graphql\": {\"limit\": 1000, \"remaining\": $2, \"reset\": 1794918000}}}"
+}
+held="This round starts, closes, labels and cancels nothing and opens no final PR, to leave room for the outcome jobs' markers."
 dispatch_call() { echo "api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=$1 -f inputs[seat]=$2"; }
 done_case() {
   if ((fails > 0)); then
@@ -179,8 +200,8 @@ for s in queued in_progress waiting pending requested; do
 done
 want_sleeps 1
 want_call "api rate_limit"
-want_out "fleet budget: 900/1000, resets 12:20 UTC (router start)"
-want_out "fleet budget: 900/1000, resets 12:20 UTC (router end)"
+want_out "fleet budget: REST 900/1000 resets 12:20 UTC, GraphQL 900/1000 resets 12:20 UTC (router start)"
+want_out "fleet budget: REST 900/1000 resets 12:20 UTC, GraphQL 900/1000 resets 12:20 UTC (router end)"
 want_exit 0
 done_case
 
@@ -240,7 +261,7 @@ echo in_progress >"$STUB/run-5021.status"
 route
 want_call "$(dispatch_call 221 c)"
 want_sleeps 12
-want_out "::error::#221: its run 5021 isn't in the run list after 60s and hasn't finished, so the next round may start task #221 again"
+want_out "::error::#221: its run 5021 isn't in the run list after 13 checks 5s apart and hasn't finished, so the next round may start task #221 again"
 want_out "fleet: 1 changes failed"
 want_exit 1
 done_case
@@ -278,7 +299,7 @@ final_ready
 route
 want_call "$(dispatch_call 251 c)"
 want_out "::warning::listing runs failed while waiting for #251, trying again"
-want_out "::error::#251: its run 5051 isn't in the run list after 60s and hasn't finished, so the next round may start task #251 again"
+want_out "::error::#251: its run 5051 isn't in the run list after 13 checks 5s apart and hasn't finished, so the next round may start task #251 again"
 want_sleeps 12
 want_output "final_prs=https://github.com/fixture/repo/pull/300"
 want_out "fleet: 1 changes failed"
@@ -293,8 +314,8 @@ ok 5061 >"$STUB/dispatch-261"
 echo "5061|task #261|queued|2" >"$STUB/runs"
 touch "$STUB/rate-limit-fail"
 route
-want_out "::warning::fleet budget: can't read it (router start)"
-want_out "::warning::fleet budget: can't read it (router end)"
+want_out "::warning::fleet budget: REST unreadable, GraphQL unreadable (router start)"
+want_out "::warning::fleet budget: REST unreadable, GraphQL unreadable (router end)"
 want_call "$(dispatch_call 261 a)"
 want_out "#261 run 5061 is in the run list"
 want_exit 0
@@ -306,9 +327,9 @@ scenario budget-low
 issue 271 | jq -s . >"$STUB/issues.json"
 ok 5071 >"$STUB/dispatch-271"
 final_ready
-echo '{"resources": {"core": {"limit": 1000, "used": 801, "remaining": 199, "reset": 1794918000}}}' >"$STUB/rate_limit.json"
+budget_json 199 900 >"$STUB/rate_limit.json"
 route
-want_out "::warning::fleet budget: 199 requests left, below the floor of 200. This round starts no task and opens no final PR, to leave room for the outcome jobs' markers."
+want_out "::warning::fleet budget: 199 REST requests left, below the floor of 200. $held"
 want_no_call "issues?state=open"
 want_no_call "dispatches"
 want_no_call "pr create"
@@ -321,7 +342,7 @@ scenario budget-floor-set
 issue 281 | jq -s . >"$STUB/issues.json"
 ok 5081 >"$STUB/dispatch-281"
 echo "5081|task #281|queued|2" >"$STUB/runs"
-echo '{"resources": {"core": {"limit": 1000, "used": 801, "remaining": 199, "reset": 1794918000}}}' >"$STUB/rate_limit.json"
+budget_json 199 900 >"$STUB/rate_limit.json"
 route FLEET_BUDGET_FLOOR=150
 want_call "$(dispatch_call 281 c)"
 want_out "#281 run 5081 is in the run list"
@@ -332,11 +353,153 @@ done_case
 scenario budget-low-stop-all
 issue 291 | jq -s . >"$STUB/issues.json"
 echo "5091|task #291|in_progress|1" >"$STUB/runs"
-echo '{"resources": {"core": {"limit": 1000, "used": 990, "remaining": 10, "reset": 1794918000}}}' >"$STUB/rate_limit.json"
+budget_json 10 900 >"$STUB/rate_limit.json"
 route FLEET_STOP_ALL=true
 want_call "issue edit 291 -R fixture/repo --add-label fleet:stop"
 want_call "api -X POST repos/fixture/repo/actions/runs/5091/cancel --silent"
 want_out "stop all: done"
+want_exit 0
+done_case
+
+# 0 left is below any floor: the round holds back, green.
+scenario budget-zero
+issue 301 | jq -s . >"$STUB/issues.json"
+budget_json 0 900 >"$STUB/rate_limit.json"
+route
+want_out "::warning::fleet budget: 0 REST requests left, below the floor of 200. $held"
+want_no_call "dispatches"
+want_exit 0
+done_case
+
+# REST above the floor, GraphQL below it: the round holds back on GraphQL alone.
+scenario budget-graphql-low
+issue 302 | jq -s . >"$STUB/issues.json"
+budget_json 900 150 >"$STUB/rate_limit.json"
+route
+want_out "fleet budget: REST 900/1000 resets 12:20 UTC, GraphQL 150/1000 resets 12:20 UTC (router start)"
+want_out "::warning::fleet budget: 150 GraphQL points left, below the floor of 200. $held"
+want_no_call "dispatches"
+want_exit 0
+done_case
+
+# Both below: the warning names both.
+scenario budget-both-low
+issue 303 | jq -s . >"$STUB/issues.json"
+budget_json 20 30 >"$STUB/rate_limit.json"
+route
+want_out "::warning::fleet budget: 20 REST requests and 30 GraphQL points left, below the floor of 200. $held"
+want_no_call "dispatches"
+want_exit 0
+done_case
+
+# No GraphQL figure: a warning line, and the round goes on, held back by REST alone (900, above).
+scenario budget-graphql-unreadable
+issue 304 | jq -s . >"$STUB/issues.json"
+ok 6004 >"$STUB/dispatch-304"
+echo "6004|task #304|queued|2" >"$STUB/runs"
+echo '{"resources": {"core": {"limit": 1000, "remaining": 900, "reset": 1794918000}}}' >"$STUB/rate_limit.json"
+route
+want_out "::warning::fleet budget: REST 900/1000 resets 12:20 UTC, GraphQL unreadable (router start)"
+want_call "$(dispatch_call 304 b)"
+want_exit 0
+done_case
+
+# remaining as the string "5" isn't a number, so it's unreadable, not 5: a warning, the round goes on.
+scenario budget-not-a-number
+issue 305 | jq -s . >"$STUB/issues.json"
+ok 6005 >"$STUB/dispatch-305"
+echo "6005|task #305|queued|2" >"$STUB/runs"
+echo '{"resources": {"core": {"limit": 1000, "remaining": "5", "reset": 1794918000},
+  "graphql": {"limit": 1000, "remaining": 900, "reset": 1794918000}}}' >"$STUB/rate_limit.json"
+route
+want_out "::warning::fleet budget: REST unreadable, GraphQL 900/1000 resets 12:20 UTC (router start)"
+want_call "$(dispatch_call 305 c)"
+want_exit 0
+done_case
+
+# A floor of 0 turns the guard off: 10 left, and the task still starts.
+scenario budget-floor-off
+issue 306 | jq -s . >"$STUB/issues.json"
+ok 6006 >"$STUB/dispatch-306"
+echo "6006|task #306|queued|2" >"$STUB/runs"
+budget_json 10 10 >"$STUB/rate_limit.json"
+route FLEET_BUDGET_FLOOR=0
+want_call "$(dispatch_call 306 a)"
+want_exit 0
+done_case
+
+# A negative floor: the round fails red before it reads anything but the budget.
+scenario budget-floor-negative
+issue 307 | jq -s . >"$STUB/issues.json"
+route FLEET_BUDGET_FLOOR=-5
+want_out "fleet: FLEET_BUDGET_FLOOR must be 0 (no floor) or a positive whole number. Only the stop rounds run until it's fixed."
+[[ $(grep -cvxF "api rate_limit" "$STUB/calls.log") == 0 ]] || fail "a call other than the budget read"
+want_exit 1
+done_case
+
+# A floor that is text doesn't stop stop all: the label and the cancel go out, green.
+scenario budget-floor-text-stop-all
+issue 308 | jq -s . >"$STUB/issues.json"
+echo "6008|task #308|in_progress|1" >"$STUB/runs"
+route FLEET_BUDGET_FLOOR=abc FLEET_STOP_ALL=true
+want_call "issue edit 308 -R fixture/repo --add-label fleet:stop"
+want_call "api -X POST repos/fixture/repo/actions/runs/6008/cancel --silent"
+want_out "stop all: done"
+want_exit 0
+done_case
+
+# A fleet:stop event whose run list fails: red, an error naming the task, no cancel, and never
+# "no active run".
+scenario stop-list-fails
+issue 311 fleet:stop | jq -s . >"$STUB/issues.json"
+echo 1 >"$STUB/list-fail-from"
+route FLEET_EVENT_LABEL=fleet:stop FLEET_EVENT_ISSUE=311
+want_out "fleet: #311 stop: listing the active runs failed, so its run wasn't cancelled"
+if grep -qF "no active run" <<<"$out"; then fail "printed no active run"; fi
+want_no_call "/cancel"
+want_exit 1
+done_case
+
+# A fleet:stop event whose cancel fails: red.
+scenario stop-cancel-fails
+issue 312 fleet:stop | jq -s . >"$STUB/issues.json"
+echo "6012|task #312|in_progress|1" >"$STUB/runs"
+touch "$STUB/cancel-fail"
+route FLEET_EVENT_LABEL=fleet:stop FLEET_EVENT_ISSUE=312
+want_out "::error::failed: gh api -X POST repos/fixture/repo/actions/runs/6012/cancel --silent"
+want_out "fleet: 1 changes failed"
+want_exit 1
+done_case
+
+# Stop all whose cancel fails: red.
+scenario stop-all-cancel-fails
+issue 313 | jq -s . >"$STUB/issues.json"
+echo "6013|task #313|in_progress|1" >"$STUB/runs"
+touch "$STUB/cancel-fail"
+route FLEET_STOP_ALL=true
+want_out "::error::failed: gh api -X POST repos/fixture/repo/actions/runs/6013/cancel --silent"
+want_out "fleet: 1 changes failed"
+want_exit 1
+done_case
+
+# One run per page. #322's run is on the second page of in_progress runs, so #322 is running and
+# isn't started; #321 starts, and its run shows on the third page from the second read of the wait.
+scenario paged-runs
+{
+  issue 321
+  issue 322
+} | jq -s . >"$STUB/issues.json"
+ok 6021 >"$STUB/dispatch-321"
+echo 1 >"$STUB/page-size"
+printf '%s\n' "6099|task #399|in_progress|1" "6022|task #322|in_progress|1" "6021|task #321|in_progress|3" >"$STUB/runs"
+echo in_progress >"$STUB/run-6021.status"
+route
+want_out "task runs active: 2, cap 16"
+want_out "#322 skip-running pr=none: a task #322 run is queued or running"
+want_no_call "inputs[issue]=322"
+want_call "$(dispatch_call 321 a)"
+want_out "#321 run 6021 is in the run list"
+want_sleeps 1
 want_exit 0
 done_case
 

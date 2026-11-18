@@ -26,10 +26,10 @@ fleet_init() {
   : "${FLEET_OWNER:?FLEET_OWNER is not set. Set the repo variable FLEET_OWNER to the login whose issues may start tasks.}"
   FLEET_MAX_JOBS=${FLEET_MAX_JOBS:-16}
   FLEET_MAX_STARTS=${FLEET_MAX_STARTS:-6}
+  # Checked by the router only, after its stop paths, so a bad value can't block a stop.
   FLEET_BUDGET_FLOOR=${FLEET_BUDGET_FLOOR:-200}
   is_number "$FLEET_MAX_JOBS" || die "FLEET_MAX_JOBS must be a positive whole number"
   is_number "$FLEET_MAX_STARTS" || die "FLEET_MAX_STARTS must be a positive whole number"
-  is_number "$FLEET_BUDGET_FLOOR" || die "FLEET_BUDGET_FLOOR must be a positive whole number"
   if [[ -n ${FLEET_FIXTURES:-} ]]; then
     [[ -d $FLEET_FIXTURES ]] || die "FLEET_FIXTURES is not a directory: $FLEET_FIXTURES"
     FLEET_REPO=${FLEET_REPO:-fixture/repo}
@@ -85,26 +85,39 @@ emit() {
   if [[ -n ${GITHUB_OUTPUT:-} ]]; then echo "$1=$2" >>"$GITHUB_OUTPUT"; fi
 }
 
-# Prints the REST budget this job's token has left, as one line:
-#   fleet budget: 812/1000, resets 01:59 UTC (router start)
-# $1 says where in the job it was read. Sets BUDGET_LEFT to the requests left, or to nothing when
-# the budget can't be read, which is a warning and never a failure. GET /rate_limit doesn't count
-# against the budget. The fixture is rate_limit.json, and a missing one can't be read.
+# Prints both budgets this job's token has left, REST requests and GraphQL points (separate
+# buckets of 1,000 an hour each for GITHUB_TOKEN), as one line:
+#   fleet budget: REST 812/1000 resets 01:59 UTC, GraphQL 960/1000 resets 01:59 UTC (router start)
+# $1 says where in the job it was read. Sets BUDGET_REST and BUDGET_GRAPHQL to what's left, each
+# empty when it can't be read. A figure that can't be read is printed as "unreadable" on a warning
+# line, never a failure. GET /rate_limit doesn't count against the budget. The fixture is
+# rate_limit.json, and a missing one can't be read.
+# shellcheck disable=SC2034 # BUDGET_REST and BUDGET_GRAPHQL are read by the router
 budget() {
-  local raw="" line limit reset
-  BUDGET_LEFT=""
+  local raw="" key name part line="" left limit reset unreadable=false
+  BUDGET_REST="" BUDGET_GRAPHQL=""
   if [[ -n ${FLEET_FIXTURES:-} ]]; then
     raw=$(cat "$FLEET_FIXTURES/rate_limit.json" 2>/dev/null) || raw=""
   else
     raw=$(gh api rate_limit 2>/dev/null) || raw=""
   fi
-  if line=$(jq -er '.resources.core
-      | select([.remaining, .limit, .reset] | all(type == "number" and . >= 0 and . == floor))
-      | "\(.remaining) \(.limit) \(.reset | strftime("%H:%M"))"' <<<"$raw" 2>/dev/null); then
-    read -r BUDGET_LEFT limit reset <<<"$line"
-    echo "fleet budget: $BUDGET_LEFT/$limit, resets $reset UTC ($1)"
+  for key in core graphql; do
+    if [[ $key == core ]]; then name=REST; else name=GraphQL; fi
+    if part=$(jq -er --arg k "$key" '.resources[$k]
+        | select([.remaining, .limit, .reset] | all(type == "number" and . >= 0 and . == floor))
+        | "\(.remaining) \(.limit) \(.reset | strftime("%H:%M"))"' <<<"$raw" 2>/dev/null); then
+      read -r left limit reset <<<"$part"
+      line+="${line:+, }$name $left/$limit resets $reset UTC"
+      if [[ $key == core ]]; then BUDGET_REST=$left; else BUDGET_GRAPHQL=$left; fi
+    else
+      line+="${line:+, }$name unreadable"
+      unreadable=true
+    fi
+  done
+  if [[ $unreadable == true ]]; then
+    warn "fleet budget: $line ($1)"
   else
-    warn "fleet budget: can't read it ($1)"
+    echo "fleet budget: $line ($1)"
   fi
   return 0
 }
@@ -240,9 +253,10 @@ api_run_status() {
 
 # Waits until each run a round dispatched is in the active run list the next round will read
 # (api_active_runs), or has finished. The list is a search, and it has missed a run for 20
-# seconds and more after its dispatch, so finding the run by its id isn't enough. Polls every
-# 5 seconds for up to 60. A run list that can't be read is a warning naming the tasks, and the
-# next poll tries again. Each run that never shows gets an error naming its task, and
+# seconds and more after its dispatch, so finding the run by its id isn't enough. Checks up to
+# 13 times with a 5 second sleep between checks: 60 seconds of sleep, plus the time the reads
+# take (5 requests and more per check), so the wait runs longer than 60 seconds. A run list that
+# can't be read is a warning naming the tasks, and the next check tries again. Each run that never shows gets an error naming its task, and
 # WAIT_MISSING counts them. Never exits, so the caller still emits its outputs.
 #   $1 lines of "<issue> <run id>"
 WAIT_SECONDS=60
@@ -274,7 +288,7 @@ wait_for_runs() {
   done
   while read -r n id; do
     [[ -n $n ]] || continue
-    echo "::error::#$n: its run $id isn't in the run list after ${WAIT_SECONDS}s and hasn't finished, so the next round may start task #$n again"
+    echo "::error::#$n: its run $id isn't in the run list after $((WAIT_SECONDS / WAIT_POLL + 1)) checks ${WAIT_POLL}s apart and hasn't finished, so the next round may start task #$n again"
     WAIT_MISSING=$((WAIT_MISSING + 1))
   done <<<"$pending"
 }
@@ -546,6 +560,13 @@ classify() {
   else
     echo failed
   fi
+}
+
+# Whether a task job ran to the agent's step timeout: true when at least $2 minutes have passed
+# since $1, the job's start time in epoch seconds (a claim: anything but a number means no). The
+# agent step starts a few seconds after the job, so a step cut off at its timeout always counts.
+ran_to_timeout() {
+  [[ $1 =~ ^[0-9]{1,12}$ && $2 =~ ^[0-9]{1,4}$ ]] && ((NOW - $1 >= $2 * 60))
 }
 
 # shellcheck disable=SC2034 # RETRY_AFTER is read by the caller

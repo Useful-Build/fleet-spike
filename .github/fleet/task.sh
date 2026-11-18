@@ -143,8 +143,11 @@ cmd_usage() {
 }
 
 cmd_pr_state() {
-  local base=${BASE:?BASE is not set}
-  emit pr_state "$(api_pulls "$n" "$base" | pr_state)"
+  local base=${BASE:?BASE is not set} state
+  # On its own line, so a failed read fails the step (and the checkpoint warns) instead of
+  # emitting an empty state.
+  state=$(api_pulls "$n" "$base" | pr_state)
+  emit pr_state "$state"
 }
 
 # Prints $1 when it's one of the other arguments, else "invalid". A claim is never printed raw:
@@ -165,7 +168,7 @@ cmd_outcome() {
   local run_id=${RUN_ID:?RUN_ID is not set} seat=${SEAT:-} started=${STARTED:-}
   local issue base pulls state stopped=false timed_out=false outcome line mk cap failed=false pr_no
   local result checkout agent paused
-  local limit=$((${AGENT_TIMEOUT_MINUTES:-330} * 60))
+  local limit=${AGENT_TIMEOUT_MINUTES:-55}
   [[ $run_id =~ ^[0-9]+$ ]] || die "RUN_ID must be a number"
 
   issue=$(api_issue "$n")
@@ -174,7 +177,7 @@ cmd_outcome() {
   state=$(pr_state <<<"$pulls")
   if has_label "$issue" fleet:stop; then stopped=true; fi
   # STARTED is the task job's start time, a claim. Anything but a number means no timeout.
-  if [[ $started =~ ^[0-9]{1,12}$ ]] && ((NOW - started >= limit)); then timed_out=true; fi
+  if ran_to_timeout "$started" "$limit"; then timed_out=true; fi
 
   result=$(known "${TASK_RESULT:-}" success failure cancelled skipped "")
   checkout=$(known "${CHECKOUT_RAN:-}" true false "")
