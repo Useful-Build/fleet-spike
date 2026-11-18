@@ -139,6 +139,8 @@ final_prs() {
     # shellcheck disable=SC2086 # numbers only, split on purpose
     ids=$(jq -nc '$ARGS.positional | map(tonumber)' --args $closed_now)
     open=$(jq --argjson ids "$ids" 'map(select(.number as $n | $ids | index($n) | not))' <<<"$open")
+    # The closed entries come from $issues, the round's start-of-round read: the same snapshot
+    # that decided the close.
     # On stdin, not as an argument: the round's issue list can pass the 128 KB one argument may hold.
     closed=$(printf '%s\n%s\n' "$closed" "$issues" | jq -s --argjson ids "$ids" '
       ([.[0][] | select(.number as $n | $ids | index($n) | not)]
@@ -319,6 +321,8 @@ if [[ $(jq length <<<"$issues") != 0 ]]; then
           echo "::error::failed: comment on #$n"
           failures=$((failures + 1))
         fi
+        # In --dry-run the simulated close succeeds and counts as closed, so the dry run predicts
+        # the final PR, and can differ from a real round whose close fails.
         if try_act gh issue close "$n" -R "$FLEET_REPO"; then closed_now+="$n "; fi
         ;;
       failed-cap)
