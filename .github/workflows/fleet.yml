@@ -313,7 +313,7 @@ jobs:
         if: steps.check.outputs.go == 'true'
         run: |
           set -euo pipefail
-          at=$(jq -rn 'now + 120 * 60 | strftime("%Y-%m-%d %H:%M")')
+          at=$(jq -rn 'now + 55 * 60 | strftime("%Y-%m-%d %H:%M")')
           [ -n "$at" ] || { echo "::error::the stop time came out empty"; exit 1; }
           echo "at=$at" >> "$GITHUB_OUTPUT"
 
