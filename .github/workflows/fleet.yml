@@ -19,8 +19,10 @@ run-name: "${{ inputs.stop_all && 'fleet stop all' || (inputs.issue && format('t
 on:
   issues:
     types: [labeled]
+  # GitHub delays scheduled runs under load, and drops some when the load is high enough. The start
+  # of every hour is a busy time, so this asks for minutes 7 and 37, not 0 and 30. Not a guarantee.
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "7,37 * * * *"
   workflow_dispatch:
     inputs:
       issue:
