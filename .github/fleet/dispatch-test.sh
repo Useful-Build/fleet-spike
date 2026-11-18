@@ -15,6 +15,8 @@
 #   task, and the round ends red. The wait polls every 5 seconds: 13 reads, 12 sleeps.
 # - A run that has already finished ends its wait at once.
 # - A task that got fleet:stop after the round read the issues isn't started.
+# - The active runs are read with one REST request per status (queued, in_progress, waiting,
+#   pending, requested).
 # - A run list that fails while waiting is a warning naming the task, then the run counts as
 #   missing, and the outputs are still written.
 # Seats: no markers, so the seat is "abc"[issue number mod 3].
@@ -38,30 +40,27 @@ d=$STUB R=fixture/repo
 echo "$*" >>"$d/calls.log"
 or_default() { if [[ -f $1 ]]; then cat "$1"; else echo "$2"; fi; }
 unexpected() { echo "stub gh: unexpected call: $*" >&2; exit 97; }
-if [[ $1 == run && $2 == list ]]; then
-  # One read of the active runs asks for each status in turn, queued first. Each line of $STUB/runs
-  # is "id|title|status|n": the run is listed from the n-th read on. list-fail-from: the n-th read
-  # and every one after it fail.
-  status="" prev=""
-  for a in "$@"; do
-    if [[ $prev == --status ]]; then status=$a; fi
-    prev=$a
-  done
-  if [[ $status == queued ]]; then echo $(($(or_default "$d/list-count" 0) + 1)) >"$d/list-count"; fi
-  c=$(cat "$d/list-count")
-  if [[ -f $d/list-fail-from ]] && ((c >= $(cat "$d/list-fail-from"))); then echo "stub: HTTP 502" >&2; exit 1; fi
-  or_default "$d/runs" "" | jq -Rn --arg s "$status" --argjson c "$c" '[inputs | select(length > 0)
-    | split("|") | select(.[2] == $s and (.[3] | tonumber) <= $c)
-    | {databaseId: (.[0] | tonumber), displayTitle: .[1], status: .[2]}]'
-  exit 0
-fi
 case "$1 ${2:-}" in
-  "issue edit" | "workflow run") exit 0 ;;
+  "issue edit") exit 0 ;;
   "pr create") echo "https://github.com/$R/pull/300"; exit 0 ;;
   "api "*) shift ;;
   *) unexpected "$@" ;;
 esac
 case "$*" in
+  "--paginate --slurp repos/$R/actions/workflows/fleet.yml/runs?status="*"&exclude_pull_requests=true&per_page=100")
+    # One read of the active runs asks for each status in turn, queued first, one page each. Each
+    # line of $STUB/runs is "id|title|status|n": the run is listed from the n-th read on.
+    # list-fail-from: the n-th read and every one after it fail.
+    status=${3#*status=}
+    status=${status%%&*}
+    if [[ $status == queued ]]; then echo $(($(or_default "$d/list-count" 0) + 1)) >"$d/list-count"; fi
+    c=$(cat "$d/list-count")
+    if [[ -f $d/list-fail-from ]] && ((c >= $(cat "$d/list-fail-from"))); then echo "stub: HTTP 502" >&2; exit 1; fi
+    or_default "$d/runs" "" | jq -Rn --arg s "$status" --argjson c "$c" '[inputs | select(length > 0)
+      | split("|") | select(.[2] == $s and (.[3] | tonumber) <= $c)
+      | {id: (.[0] | tonumber), display_title: .[1], status: .[2]}]
+      | [{total_count: length, workflow_runs: .}]'
+    ;;
   "--paginate --slurp repos/$R/issues?state=open&labels=fleet&per_page=100") printf '[%s]\n' "$(cat "$d/issues.json")" ;;
   "--paginate --slurp repos/$R/issues?state=closed&labels=fleet&per_page=100") printf '[%s]\n' "$(or_default "$d/closed.json" '[]')" ;;
   "--paginate --slurp repos/$R/git/matching-refs/heads/fleet/?per_page=100") printf '[%s]\n' "$(or_default "$d/branches.json" '[]')" ;;
@@ -72,6 +71,7 @@ case "$*" in
     printf '[%s]\n' "$(or_default "$d/comments-${n%%/*}.json" '[]')"
     ;;
   "-X PUT repos/$R/issues/"*"/lock --silent") ;;
+  "-X POST repos/$R/actions/workflows/ci.yml/dispatches -f ref="*" --silent") ;;
   "-X POST repos/$R/actions/workflows/fleet.yml/dispatches "*)
     n="" details=false prev=""
     for a in "$@"; do
@@ -162,6 +162,10 @@ route
 want_call "$(dispatch_call 201 a)"
 want_out "#201 started run 5001"
 want_out "#201 run 5001 is in the run list"
+# One request per active status, each the REST list itself, not gh run list.
+for s in queued in_progress waiting pending requested; do
+  want_call "api --paginate --slurp repos/fixture/repo/actions/workflows/fleet.yml/runs?status=$s&exclude_pull_requests=true&per_page=100"
+done
 want_sleeps 1
 want_exit 0
 done_case

@@ -14,7 +14,7 @@ task runs active: 2, cap 25
   would run: gh api -X POST repos/fixture/repo/actions/workflows/fleet.yml/dispatches -f ref=main -F return_run_details=true -f inputs[issue]=104 -f inputs[seat]=a
 #105 skip-stopped pr=draft
 #105 stop
-  would run: gh run cancel 9005 -R fixture/repo
+  would run: gh api -X POST repos/fixture/repo/actions/runs/9005/cancel --silent
 #106 skip-failed pr=draft
 #107 skip-waiting pr=automerge
 #108 start pr=ready
@@ -112,27 +112,27 @@ fleet/done final PR: ready
 
 - #301
 - #302
-  would run: gh workflow run ci.yml -R fixture/repo --ref fleet/done
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/ci.yml/dispatches -f ref=fleet/done --silent
 fleet/has-pr final PR: a PR into main is already open
 fleet/empty final PR: not ahead of main
 fleet/closing final PR: ready
   would run: gh pr create -R fixture/repo --base main --head fleet/closing --title fleet/closing into main --body Every fleet task issue for `fleet/closing` is closed. Task PRs merged into it:
 
 - #240
-  would run: gh workflow run ci.yml -R fixture/repo --ref fleet/closing
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/ci.yml/dispatches -f ref=fleet/closing --silent
 fleet/orphan final PR: not ready, no closed task names it
 fleet/reviewed final PR: a closed PR into main has this head, not reopened
 fleet/reworked final PR: ready
   would run: gh pr create -R fixture/repo --base main --head fleet/reworked --title fleet/reworked into main --body Every fleet task issue for `fleet/reworked` is closed. Task PRs merged into it:
 
 - #305
-  would run: gh workflow run ci.yml -R fixture/repo --ref fleet/reworked
+  would run: gh api -X POST repos/fixture/repo/actions/workflows/ci.yml/dispatches -f ref=fleet/reworked --silent
 fleet: 1 changes failed
 [exit 1]
 
 $ env FLEET_EVENT_LABEL=fleet:stop FLEET_EVENT_ISSUE=101 bash .github/fleet/router.sh
 #101 stop
-  would run: gh run cancel 9001 -R fixture/repo
+  would run: gh api -X POST repos/fixture/repo/actions/runs/9001/cancel --silent
 [exit 0]
 
 $ env FLEET_EVENT_LABEL=bug FLEET_EVENT_ISSUE=101 bash .github/fleet/router.sh
@@ -225,9 +225,9 @@ $ env FLEET_STOP_ALL=true bash .github/fleet/router.sh
 #130 stop all: add fleet:stop
   would run: gh issue edit 130 -R fixture/repo --add-label fleet:stop
 stop all: cancel run 9001
-  would run: gh run cancel 9001 -R fixture/repo
+  would run: gh api -X POST repos/fixture/repo/actions/runs/9001/cancel --silent
 stop all: cancel run 9005
-  would run: gh run cancel 9005 -R fixture/repo
+  would run: gh api -X POST repos/fixture/repo/actions/runs/9005/cancel --silent
 stop all: done
 [exit 0]
 

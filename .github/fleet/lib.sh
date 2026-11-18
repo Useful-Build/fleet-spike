@@ -184,19 +184,22 @@ api_pulls() {
       })'
 }
 
-# Runs of fleet.yml that haven't finished, as [{databaseId, displayTitle, status}].
+# Runs of fleet.yml that haven't finished, as [{databaseId, displayTitle, status}]. One request per
+# status and page of 100. The REST list takes one status per request, and gh run list would add a
+# workflow lookup to each. The fixture runs.json is the runs' workflow_runs entries, all statuses.
 api_active_runs() {
-  if [[ -n ${FLEET_FIXTURES:-} ]]; then
-    fixture runs
-    return
-  fi
   local s all="[]" page
-  for s in $ACTIVE_STATUSES; do
-    page=$(gh run list -R "$FLEET_REPO" --workflow fleet.yml --status "$s" --limit 1000 \
-      --json databaseId,displayTitle,status) || die "listing $s runs failed"
-    all=$(jq -n --argjson a "$all" --argjson b "$page" '$a + $b')
-  done
-  echo "$all"
+  if [[ -n ${FLEET_FIXTURES:-} ]]; then
+    all=$(fixture runs)
+  else
+    for s in $ACTIVE_STATUSES; do
+      page=$(gh api --paginate --slurp \
+        "repos/$FLEET_REPO/actions/workflows/fleet.yml/runs?status=$s&exclude_pull_requests=true&per_page=100" |
+        jq '[.[].workflow_runs[]]') || die "listing $s runs failed"
+      all=$(jq -n --argjson a "$all" --argjson b "$page" '$a + $b')
+    done
+  fi
+  jq 'map({databaseId: .id, displayTitle: .display_title, status})' <<<"$all"
 }
 
 # The status of one run (queued, in_progress, completed, ...), or "unknown" when it can't be read

@@ -42,7 +42,7 @@ cancel_task_runs() {
   ids=$(jq -r --arg t "task #$n" '.[] | select(.displayTitle == $t) | .databaseId' <<<"$active")
   for id in $ids; do
     echo "#$n stop: cancel run $id"
-    try_act gh run cancel "$id" -R "$FLEET_REPO" || true
+    try_act gh api -X POST "repos/$FLEET_REPO/actions/runs/$id/cancel" --silent || true
   done
   if [[ -z $ids ]]; then echo "#$n stop: no active run"; fi
 }
@@ -64,7 +64,7 @@ stop_all() {
   while read -r id _; do
     [[ -n $id ]] || continue
     echo "stop all: cancel run $id"
-    try_act gh run cancel "$id" -R "$FLEET_REPO" || true
+    try_act gh api -X POST "repos/$FLEET_REPO/actions/runs/$id/cancel" --silent || true
   done <<<"$ids"
   echo "stop all: done"
 }
@@ -106,7 +106,7 @@ ${merged:-none}"
   # A PR opened with GITHUB_TOKEN gets only a ci run that waits for a person's approval, and main
   # requires ci. A dispatch with GITHUB_TOKEN always creates a run, and its ci check lands on the
   # branch's head commit.
-  if ! act gh workflow run ci.yml -R "$FLEET_REPO" --ref "$b"; then
+  if ! act gh api -X POST "repos/$FLEET_REPO/actions/workflows/ci.yml/dispatches" -f "ref=$b" --silent; then
     echo "::error::$b final PR: starting ci failed. Run ci on $b by hand."
     touch "$tmp/ci-failed"
   fi
