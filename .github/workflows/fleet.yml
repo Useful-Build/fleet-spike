@@ -262,14 +262,14 @@ jobs:
           ssh-key: ${{ secrets.FLEET_AGENTS_CONFIG_KEY }}
           persist-credentials: false
           path: .fleet-rules
-      # Same file set as the cloud environment's setup script (tools/cloud-setup.sh in agents-config).
+      # The skills a fleet task needs from agents-config (the fleet skill covers fleet jobs).
       - name: Install the rules, skills and agents
         if: steps.check.outputs.go == 'true'
         run: |
           set -euo pipefail
           src=.fleet-rules
           mkdir -p ~/.claude/skills ~/.claude/agents
-          for s in change-loop model-routing cloud-sessions heavy-jobs evals verification web-browsing goal-to-spec simplest-path; do
+          for s in change-loop model-routing fleet heavy-jobs evals verification web-browsing goal-to-spec simplest-path; do
             [ -f "$src/skills/$s/SKILL.md" ] || { echo "::error::missing skill $s"; exit 1; }
             cp -R "$src/skills/$s" ~/.claude/skills/
           done
